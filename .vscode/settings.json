@@ -5,12 +5,16 @@
     "**/.pytest_cache": true,
     "**/.mypy_cache": true,
     "**/.ruff_cache": true,
-    "**/htmlcov": true
+    "**/htmlcov": true,
+    "**/~$*": true,
+    "**/.DS_Store": true,
   },
   "search.exclude": {
     "**/__pycache__": true,
     "**/*.egg-info": true,
     "**/venv": true,
-    "**/.venv": true
+    "**/.venv": true,
+    "**/.pytest_cache": true,
+    "**/.mypy_cache": true,
   }
 }
