@@ -13,7 +13,7 @@
 - [x] T06 Antithetic Variates 覆盖不完整：当前主要计算默认 European payoff，没有完整覆盖 binary call。
 - [x] T07 Antithetic Variates 中 `N` 的含义需要明确：当前可解释为 `N` 对 antithetic pairs，实际使用 `2N` 条路径，报告和代码需统一说明。
 - [x] T08 `calculate_payoff()`、`monte_carlo_pricing()` 依赖全局变量，例如 `K`、`r`、`T`，容易导致敏感性分析出错，应改为显式传参。
-- [ ] T09 敏感性分析缺少标准误差和结果表：目前主要输出价格，不足以支撑考试要求中的 tables、error analysis、comparisons。
+- [x] T09 敏感性分析缺少结果表：已按考试中 “vary the data to see the effect on the option price” 的要求，为 S0、K、r、sigma、T 五组敏感性分析补充价格结果表。
 
 ## 低优先级 / 报告表达
 
