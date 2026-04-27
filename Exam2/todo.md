@@ -3,7 +3,7 @@
 ## 高优先级
 
 - [x] T01 参数敏感性函数逻辑错误：`sensitivity_analysis()` 创建了 `S0_temp`、`K_temp`、`r_temp`、`sigma_temp`、`T_temp`，但除 `T_temp` 外大部分临时参数没有真正传入模拟和 payoff 计算。
-- [ ] T02 GBM 闭式解模拟方式需要调整：当前使用 `phi[:, -1]`，更清晰的做法是为闭式终值单独生成 `N` 个标准正态随机数，或用同一组 Brownian increments 做公平比较。
+- [x] T02 GBM 闭式解模拟方式需要调整：当前使用 `phi[:, -1]`，更清晰的做法是为闭式终值单独生成 `N` 个标准正态随机数，或用同一组 Brownian increments 做公平比较。
 - [x] T03 标准误差公式文字和代码不一致：文字写作 `std(Payoff) / sqrt(N)`，代码实际使用贴现后的 `exp(-rT) * std(Payoff) / sqrt(N)`，报告中应统一为贴现后的标准误差。
 - [x] T04 基础参数中的 `M=50` 与代码中的 `M=252` 前后不一致，需要统一并解释选择。
 - [x] T05 后续代码引用未定义变量：对偶变量部分使用了 `euler_se`、`mil_se`，但前文没有稳定定义这些变量。
