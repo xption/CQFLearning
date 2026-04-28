@@ -183,9 +183,9 @@ np.random.seed(42)
 - 至少确保第 4.4 节 baseline error analysis table 正常显示。
 - 如需进一步增强报告，可在敏感性分析中补充 benchmark line 或 error summary。
 
-## T08 Markdown 显示细节需要 polish
+## T08 已完成：Markdown 显示细节需要 polish
 
-当前 Cell 34 中有转义/HTML 实体残留，例如：
+原问题：Cell 34 中有转义/HTML 实体残留，例如：
 
 ```text
 # 7. Interesting Observations \&amp; Problems Encountered
@@ -204,3 +204,9 @@ Kloeden, P. E., \&amp; Platen, E.
 # 7. Interesting Observations & Problems Encountered
 Kloeden, P. E., & Platen, E.
 ```
+
+完成记录：
+
+- 2026-04-28 已清理 `Answer.ipynb` Cell 34 中的 `\&amp;` / `&amp;` 残留。
+- 同步清理了同一 cell 中不必要的 Markdown 转义，例如 `\(15%\)`、`\_`、`np.random.seed\(42\)`。
+- 第 7 节标题、Conclusion/References 标题和 references 显示已改为正常 Markdown。
