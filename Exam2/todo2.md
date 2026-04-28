@@ -10,7 +10,7 @@
 
 总体判断：`Answer.ipynb` 已基本覆盖考试题核心要求，包括 European call、binary call、Euler-Maruyama、Milstein、GBM closed-form stock simulation、参数敏感性分析、antithetic variates、报告结构和 references。以下问题建议后续讨论后再修改。
 
-## T01 第 4.4 节保存输出与代码不一致
+## T01 已完成：第 4.4 节保存输出与代码不一致
 
 Cell 19 的源码里已经加入了：
 
@@ -19,7 +19,7 @@ Cell 19 的源码里已经加入了：
 - cash-or-nothing binary call benchmark
 - 每种 MC 方法相对解析价格的绝对误差
 
-但当前 notebook 保存的输出中没有显示 error analysis table，只显示了 baseline pricing table 和两行对比文字。
+原问题：notebook 保存的输出中没有显示 error analysis table，只显示了 baseline pricing table 和两行对比文字。
 
 风险：
 
@@ -29,6 +29,11 @@ Cell 19 的源码里已经加入了：
 建议：
 
 - 重新运行并保存第 4.4 节，确保 `error_analysis_table` 出现在 notebook 输出中。
+
+完成记录：
+
+- 2026-04-28 复核 `Answer.ipynb` 后确认 Cell 19 已保存 3 个输出：baseline pricing table、`error_analysis_table`、benchmark 说明文字。
+- `error_analysis_table` 已正常显示 Black-Scholes European call benchmark、cash-or-nothing binary call benchmark，以及三种 MC 方法的 absolute error。
 
 ## T02 Antithetic Variates 未覆盖 GBM closed-form simulation
 
