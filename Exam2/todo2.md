@@ -142,9 +142,9 @@ Cell 19 的源码里已经加入了：
 
 或补充不同 `M` 下的误差/价格比较后再保留较强结论。
 
-## T06 可复现性不足
+## T06 已完成：可复现性不足
 
-当前 notebook 没有实际设置随机种子，只在补充说明中提到：
+原问题：notebook 没有实际设置随机种子，只在补充说明中提到：
 
 ```python
 np.random.seed(42)
@@ -159,6 +159,11 @@ np.random.seed(42)
 
 - 在 import 后显式加入 `np.random.seed(42)`。
 - 或说明所有结果为一次随机实验结果，重新运行会有 Monte Carlo sampling variation。
+
+完成记录：
+
+- 2026-04-28 已在 `Answer.ipynb` 的 import 单元格后显式加入 `np.random.seed(42)`。
+- 已重新运行并保存整本 notebook，使敏感性分析、AV 结果和误差分析表与固定随机种子后的输出一致。
 
 ## T07 敏感性分析部分缺少 SE 或 benchmark error
 
