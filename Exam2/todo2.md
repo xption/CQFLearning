@@ -173,7 +173,7 @@ np.random.seed(42)
 - 2026-04-28 已在 `Answer.ipynb` 的 import 单元格后显式加入 `np.random.seed(42)`。
 - 已重新运行并保存整本 notebook，使敏感性分析、AV 结果和误差分析表与固定随机种子后的输出一致。
 
-## T07 敏感性分析部分缺少 SE 或 benchmark error
+## T07 已完成：敏感性分析部分缺少 SE 或 benchmark error
 
 当前第 5 节敏感性分析包含：
 
@@ -195,6 +195,13 @@ np.random.seed(42)
 
 - 至少确保第 4.4 节 baseline error analysis table 正常显示。
 - 如需进一步增强报告，可在敏感性分析中补充 benchmark line 或 error summary。
+
+完成记录：
+
+- 2026-04-28 已确认第 4.4 节 baseline error analysis table 正常显示，包含三种 Monte Carlo 方法相对 analytical benchmark 的绝对误差。
+- 根据讨论，`Results - appropriate tables, error analysis and comparisons [40%]` 中的 error analysis 由第 4.4 节基准参数结果承担。
+- 第 5 节敏感性分析不再逐点补充 benchmark error 或 SE，而是聚焦价格表、曲线和三种模拟方法之间的趋势对比。
+- 已在 `Answer.ipynb` 第 5 节开头补充说明，明确 error analysis 放在第 4.4 节，敏感性分析不重复计算每个敏感性点的 benchmark error。
 
 ## T08 已完成：Markdown 显示细节需要 polish
 
