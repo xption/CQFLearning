@@ -35,9 +35,9 @@ Cell 19 的源码里已经加入了：
 - 2026-04-28 复核 `Answer.ipynb` 后确认 Cell 19 已保存 3 个输出：baseline pricing table、`error_analysis_table`、benchmark 说明文字。
 - `error_analysis_table` 已正常显示 Black-Scholes European call benchmark、cash-or-nothing binary call benchmark，以及三种 MC 方法的 absolute error。
 
-## T02 Antithetic Variates 未覆盖 GBM closed-form simulation
+## T02 已完成：Antithetic Variates 未覆盖 GBM closed-form simulation
 
-当前第 6 节 AV 只比较：
+原问题：第 6 节 AV 只比较：
 
 - Euler-Maruyama
 - Milstein
@@ -59,6 +59,13 @@ Cell 19 的源码里已经加入了：
 
 - 方案 A：补充 `GBM closed-form + AV` 结果。
 - 方案 B：在文字中明确说明第 6 节只用 Euler/Milstein 离散路径演示 AV 技术。
+
+完成记录：
+
+- 2026-04-28 已采用方案 A。
+- `Answer.ipynb` 第 6 节的 `antithetic_variates()` 已补充 GBM closed-form terminal simulation 的 AV 计算。
+- 第 6 节结果表已更新为 6 行：`GBM closed-form path`、`GBM closed-form path+AV`、`欧拉法`、`欧拉法+AV`、`米尔斯坦法`、`米尔斯坦法+AV`。
+- European call 和 binary call 均已覆盖 GBM/Euler/Milstein 的普通 MC 与 AV 对比。
 
 ## T03 已完成：Antithetic Variates 的比较口径改为固定总路径数
 
