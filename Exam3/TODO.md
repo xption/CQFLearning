@@ -3,7 +3,7 @@
 ### 一、与题目要求不一致
 
 - [x] **1. 提交格式**：题目要求 PDF 为主报告，notebook 只是辅助文件。原文："Python notebook with auxiliary output is not an analytical report: such submission will receive a deduction."（不修改，课程网页允许提交 ipynb，且 notebook 中已包含充分的文字说明和理论分析，不属于"只有代码和输出"的情况）
-- [ ] **2. Question 2 的 justify 不足**：题目 (b) 要求 justify the selection of features retained at each step。当前缺少对阈值选择的理由说明（为什么相关性 0.98？为什么 MI top 64？为什么最终 15 个？）。
+- [x] **2. Question 2 的 justify 不足**：题目 (b) 要求 justify the selection of features retained at each step。当前缺少对阈值选择的理由说明。（已修复，filter step 补充了 0.98 阈值和 top 64 的理由，embedded step 补充了选择依据说明）
 - [x] **3. Question 1 篇幅与分值不匹配**：10 分的 True/False 题用了画图+数值表+代码演示，比例失衡，有凑字数嫌疑。（已修复，删除了代码和图，只保留文字理论解释和结论）
 
 ### 二、文字理论与代码不一致
