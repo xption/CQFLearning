@@ -10,7 +10,7 @@
 
 - [x] **4. Feature importance 图文不一致**：文字说 "this study focuses on gain importance"，但紧接着第一张图用的是 `importance_type="weight"`。（已修复，删除了声称只关注 gain 的句子，保留两种图均展示）
 - [x] **5. Wrapper 方法描述与实现有偏差**：文字说 "evaluate feature subsets"，实际只是按 MI 排名取 top-N 递增测试，不是标准 wrapper（搜索不同子集组合）。（已修复，补充说明了具体做法是按 MI 排名递增取子集评估）
-- [ ] **6. 代码注释 "Scale and fit" 不准确**：baseline model 上方注释写 "Scale and fit the classifier model"，但实际没有做 scaling。
+- [x] **6. 代码注释 "Scale and fit" 不准确**：baseline model 上方注释写 "Scale and fit the classifier model"，但实际没有做 scaling。（不修改，与课程 notebook 原文一致）
 
 ### 三、AI 生成痕迹
 
