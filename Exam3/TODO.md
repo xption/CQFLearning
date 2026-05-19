@@ -20,4 +20,4 @@
 
 ### 四、其他小问题
 
-- [ ] **10. 中文字体残留**：英文版 `plt.rcParams` 中保留了 "Microsoft YaHei"、"SimHei"，暴露从中文翻译而来。
+- [x] **10. 中文字体残留**：英文版 `plt.rcParams` 中保留了 "Microsoft YaHei"、"SimHei"，暴露从中文翻译而来。（已修复，统一为 Arial + DejaVu Sans）
