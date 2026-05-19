@@ -32,3 +32,14 @@
 3. 约定 3
 
 虽然题目是英文，但是你与我沟通以及答案全部用中文，我会在全部完成之后确认无误再让你帮我翻译为英文。
+
+4. 约定 4
+在 14_gradientboosting_ks.ipynb 中的 Section 2: The workflow 有 7 个 Step 的表格，这个表格很重要，原封不动的拷贝到我的 Answer 3 中合适位置。
+
+Answer 3 的结构，需要与 14_gradientboosting_ks.ipynb 一致，例如：
+- Install Packages
+- Import Libraries
+- Section 1: Experiment Tracking
+- Section 2: The workflow
+
+14_gradientboosting_ks.ipynb 的内容与考试内容高度一致，只是我使用沪深 300 数据，并且不是用 google.colab 和 wandb 两个服务，你完全可以照葫芦画瓢，严格按照 14_gradientboosting_ks.ipyn 的内容结构解答。

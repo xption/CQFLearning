@@ -270,32 +270,216 @@ final_feature_table"""
 ]
 
 
-answer3_cells = [
+# Reference-style overrides for Answer2 and Answer3. These cells keep the
+# submitted notebooks close to the course workflow while still answering the
+# feature-selection and CSI 300 requirements.
+answer2_cells = [
     md(
-        "# Question C：使用梯度提升预测正向市场走势\n\n"
-        "本题基于第 2 题筛选出的特征，建立、调参并评估一个用于预测沪深 300 指数下一交易日有效上涨的梯度提升模型。"
-    ),
-    md(
-        "## 建模设计\n\n"
-        "目标变量为二分类标签：如果下一交易日对数收益率大于 0.15%，则为 1；否则为 0。"
-        "这个定义使“上涨”不是简单的大于零，而是剔除了非常接近零的小幅波动。\n\n"
-        "模型采用 `XGBoostClassifier`。选择 XGBoost 的原因是它能够处理非线性关系和特征交互，"
-        "并且内置正则化、列采样和行采样，适合金融数据中噪声较高、信号较弱的场景。"
+        "# Question B：使用 Funnelling Approach 进行特征选择\n\n"
+        "本题在沪深 300 指数数据上构造滚动收益和滚动波动率特征，并将 filter、wrapper 和 embedded 三类方法组合成漏斗式特征选择流程。"
     ),
     code(
-        r"""from pathlib import Path
+        r"""# Data manipulation
+import pandas as pd
+import numpy as np
+
+# Visualization
+import matplotlib.pyplot as plt
+
+# Classifier
+from xgboost import XGBClassifier
+
+# Feature selection and model validation
+from sklearn.feature_selection import mutual_info_classif
+from sklearn.model_selection import train_test_split, TimeSeriesSplit, cross_val_score
+from sklearn.utils.class_weight import compute_sample_weight
+
+plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"]
+plt.rcParams["axes.unicode_minus"] = False"""
+    ),
+    md(
+        "## 数据读取与候选特征构造\n\n"
+        "候选特征与建模流程保持一致：先计算日度对数收益率，然后生成 10 到 60 日窗口的滚动累计收益 `Ret_*` 和滚动标准差 `Std_*`。"
+        "这些特征分别刻画趋势/动量和波动状态。"
+    ),
+    code(
+        r"""# Load file
+df = pd.read_csv("CSI300_2005_2026.csv", index_col=0, parse_dates=True)
+
+# Calculate returns
+df["Returns"] = np.log(df["Adj Close"]).diff()
+df = df["2010":].copy()
+
+# Create features (predictors) list
+features_list = []
+for r in range(10, 65, 5):
+    df["Ret_" + str(r)] = df.Returns.rolling(r).sum()
+    df["Std_" + str(r)] = df.Returns.rolling(r).std()
+    features_list.append("Ret_" + str(r))
+    features_list.append("Std_" + str(r))
+
+# Define target before dropping NaN values so the last row without a forward return is removed.
+target_threshold = 0.0010
+df["Target_Return"] = np.log(df["Adj Close"].shift(-1) / df["Adj Close"])
+df["Label"] = np.where(df["Target_Return"] > target_threshold, 1, 0)
+
+# Drop NaN values
+df.dropna(inplace=True)
+
+X = df[features_list]
+y = df["Label"].values
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+sample_weights = compute_sample_weight(class_weight="balanced", y=y_train)
+
+summary = pd.DataFrame({
+    "Item": ["Candidate features", "Training observations", "Testing observations", "Training positive rate", "Testing positive rate"],
+    "Value": [len(features_list), len(X_train), len(X_test), round(y_train.mean(), 4), round(y_test.mean(), 4)],
+})
+summary"""
+    ),
+    md(
+        "## Step 1：Filter 方法\n\n"
+        "Filter 阶段先删除高度相关的冗余特征，再用 mutual information 对剩余特征排序。"
+        "相关性阈值设为 0.98，用于减少几乎重复的滚动波动率特征。"
+    ),
+    code(
+        r"""# Correlation filter
+corr = X_train.corr().abs()
+upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
+corr_dropped = [column for column in upper.columns if any(upper[column] > 0.98)]
+corr_features = [column for column in X_train.columns if column not in corr_dropped]
+
+# Mutual information filter
+mi_scores = pd.Series(
+    mutual_info_classif(X_train[corr_features], y_train, random_state=42),
+    index=corr_features,
+).sort_values(ascending=False)
+
+filter_features = list(mi_scores.head(min(18, len(mi_scores))).index)
+
+print(f"Initial feature count: {len(features_list)}")
+print(f"Dropped by correlation filter: {corr_dropped}")
+print(f"Features kept for wrapper step: {len(filter_features)}")
+mi_scores.head(18).to_frame("mutual_information")"""
+    ),
+    md(
+        "## Step 2：Wrapper 方法\n\n"
+        "Wrapper 阶段使用 XGBoost 分类器和 `TimeSeriesSplit`。按互信息排序取前 N 个特征，比较不同 N 下的交叉验证 ROC AUC，"
+        "并使用 `compute_sample_weight` 处理训练集类别不平衡。"
+    ),
+    code(
+        r"""# Wrapper selection with time-series cross validation
+tscv = TimeSeriesSplit(n_splits=5, gap=1)
+wrapper_rows = []
+
+for n_features in [8, 10, 12, 14, 16, 18]:
+    cols = filter_features[: min(n_features, len(filter_features))]
+    selector_model = XGBClassifier(
+        verbosity=0,
+        eval_metric="logloss",
+        n_estimators=100,
+        max_depth=3,
+        learning_rate=0.05,
+    )
+    cv_scores = cross_val_score(
+        selector_model,
+        X_train[cols],
+        y_train,
+        cv=tscv,
+        scoring="roc_auc",
+        params={"sample_weight": sample_weights},
+        n_jobs=1,
+    )
+    wrapper_rows.append({
+        "n_features": len(cols),
+        "cv_roc_auc_mean": cv_scores.mean(),
+        "cv_roc_auc_std": cv_scores.std(),
+        "features": cols,
+    })
+
+wrapper_table = pd.DataFrame(wrapper_rows).drop_duplicates("n_features")
+best_wrapper = wrapper_table.sort_values(["cv_roc_auc_mean", "n_features"], ascending=[False, True]).iloc[0]
+wrapper_features = list(best_wrapper["features"])
+
+wrapper_table.drop(columns=["features"]).round(4)"""
+    ),
+    md(
+        "## Step 3：Embedded 方法\n\n"
+        "Embedded 阶段在 wrapper 选出的特征上训练 XGBoost，并使用模型内部的 gain importance 排序。"
+        "最终保留 gain 排名前 10 的特征作为第 3 题模型输入。"
+    ),
+    code(
+        r"""# Embedded selection by XGBoost gain importance
+embedded_model = XGBClassifier(
+    verbosity=0,
+    eval_metric="logloss",
+    n_estimators=100,
+    max_depth=3,
+    learning_rate=0.05,
+    importance_type="gain",
+)
+
+embedded_model.fit(X_train[wrapper_features], y_train, sample_weight=sample_weights)
+
+gain_scores = pd.Series(
+    embedded_model.feature_importances_,
+    index=wrapper_features,
+).sort_values(ascending=False)
+
+final_features = list(gain_scores.head(min(10, len(gain_scores))).index)
+
+final_feature_table = pd.DataFrame({
+    "Rank": range(1, len(final_features) + 1),
+    "Feature": final_features,
+    "XGBoost gain": gain_scores.loc[final_features].round(6).values,
+})
+final_feature_table"""
+    ),
+    md(
+        "## 特征选择结论\n\n"
+        "漏斗流程从 22 个候选滚动特征开始，先通过相关性和互信息进行 filter，再通过时间序列交叉验证完成 wrapper 筛选，"
+        "最后通过 XGBoost gain importance 完成 embedded 筛选。最终特征将用于第 3 题的梯度提升模型。"
+    ),
+]
+
+
+answer3_cells = [
+    md(
+        "# XGBoost：Predicting Positive Market Moves Using CSI 300\n\n"
+        "本研究使用沪深 300 指数数据建立梯度提升分类模型，目标是预测下一交易日是否出现有效上涨。"
+        "分析流程包括数据读取、探索性分析、清洗、特征工程、特征选择、模型训练、超参数调优、预测质量评估以及简单交易信号回测。"
+    ),
+    md("## Install Packages"),
+    code(
+        r"""# Install packages
+# 检查分析所需依赖是否可导入。
+import importlib.util
+import pandas as pd
+
+required_packages = ["numpy", "pandas", "matplotlib", "sklearn", "xgboost", "scipy"]
+package_status = pd.DataFrame({
+    "Package": required_packages,
+    "Available": [importlib.util.find_spec(pkg) is not None for pkg in required_packages],
+})
+package_status"""
+    ),
+    md("## Import Libraries"),
+    code(
+        r"""# Data manipulation
+from pathlib import Path
 import os
 import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn.metrics import ConfusionMatrixDisplay, RocCurveDisplay
+from sklearn.metrics import ConfusionMatrixDisplay, PrecisionRecallDisplay, RocCurveDisplay
 
 plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"]
 plt.rcParams["axes.unicode_minus"] = False
 
-# 允许 notebook 从项目根目录或 Exam3 目录运行。
+# 设置工作目录以便读取数据与工具函数。
 if Path.cwd().name != "Exam3" and (Path.cwd() / "Exam3").exists():
     os.chdir(Path.cwd() / "Exam3")
 if str(Path.cwd()) not in sys.path:
@@ -312,41 +496,187 @@ from workflow_draft import (
     backtest_signal,
 )
 
-config = WorkflowConfig(data_path=Path("CSI300_2005_2026.csv"))
+DATA_PATH = Path("CSI300_2005_2026.csv")
+config = WorkflowConfig(data_path=DATA_PATH)
 config"""
     ),
+    md(
+        "## Section 1: Experiment Tracking\n\n"
+        "本研究记录实验目标、样本切分、标签定义、交叉验证方案、模型参数、评估指标和回测结果。"
+        "这些信息用于保证建模流程可复核，并方便比较基准模型与调参后模型的表现。"
+    ),
     code(
-        r"""data, feature_cols = build_features(config)
+        r"""# Experiment Tracker
+experiment_setup = pd.DataFrame({
+    "Item": [
+        "Asset",
+        "Data source",
+        "Objective",
+        "Target threshold",
+        "Train/test split",
+        "Cross validation",
+        "Experiment tracking",
+    ],
+    "Value": [
+        "CSI 300 Index",
+        str(DATA_PATH),
+        "Predict next-day effective uptrend with binomial classification",
+        f"next-day log return > {config.target_threshold:.2%}",
+        f"Chronological split, test size = {config.test_size:.0%}",
+        f"TimeSeriesSplit(n_splits={config.cv_splits}, gap={config.cv_gap})",
+        "Configuration table, cross-validation output, metrics and plots",
+    ],
+})
+experiment_setup"""
+    ),
+    md(
+        "## Section 2: The workflow\n\n"
+        "We'll employ XGBoost classifier from `scikit-learn` for stock / equity index trend prediction.\n\n"
+        "| Steps        | Workflow                  | Remarks                                                         |\n"
+        "|:-------------|:--------------------------|:----------------------------------------------------------------|\n"
+        "|Step 1        | Ideation                  | Define objective, success metrics     |\n"
+        "|Step 2        | Data Collection           | Gather and integrate data\n"
+        "|Step 3        | Exploratory Data Analysis (Initial) | Broad exploration: stats, distributions, correlations, missing data |\n"
+        "|Step 4        | Data Cleaning           | Handle missing values, outliers, duplicates.            |\n"
+        "|Step 5        | Feature Engineering & Transformation            | Feature creation, scaling, encoding, selection                         |\n"
+        "|        | Subset Validation EDA            | Re-examine chosen features: check distributions, multicollinearity, relationships                      |               \n"
+        "|Step 6        | Modeling                  | Select algorithm(s), train models, tune hyperparameters                           |\n"
+        "|Step 7        | Evaluation                   | Validate using metrics and backtesting       |"
+    ),
+    md(
+        "### (1) Load Data\n\n"
+        "数据文件为 `CSI300_2005_2026.csv`。字段包括 Open、High、Low、Close、Adj Close 和 Volume。"
+    ),
+    code(
+        r"""# Load file
+raw_df = pd.read_csv(DATA_PATH, parse_dates=["Date"]).sort_values("Date").set_index("Date")
+
+raw_summary = pd.DataFrame({
+    "Item": ["Start date", "End date", "Rows", "Columns"],
+    "Value": [raw_df.index.min().date(), raw_df.index.max().date(), len(raw_df), raw_df.shape[1]],
+})
+display(raw_df.head())
+raw_summary"""
+    ),
+    md("### (2) EDA of Original dataset"),
+    code(
+        r"""# Descriptive statistics
+raw_df.describe().T"""
+    ),
+    code(
+        r"""fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+raw_df["Adj Close"].plot(ax=axes[0], color="#1f77b4", linewidth=1.4)
+axes[0].set_title("沪深 300 调整收盘价")
+axes[0].set_ylabel("Index level")
+axes[0].grid(True, alpha=0.3)
+
+raw_df["Volume"].plot(ax=axes[1], color="#7f7f7f", linewidth=1.0)
+axes[1].set_title("成交量")
+axes[1].set_ylabel("Volume")
+axes[1].grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()"""
+    ),
+    md("### (3) Cleaning & Imputation"),
+    code(
+        r"""# Check for missing values, duplicates and invalid prices.
+cleaning_checks = pd.DataFrame({
+    "Check": [
+        "Missing values",
+        "Duplicate dates",
+        "Non-positive Open/High/Low/Close/Adj Close",
+        "Non-positive Volume",
+    ],
+    "Result": [
+        int(raw_df.isna().sum().sum()),
+        int(raw_df.index.duplicated().sum()),
+        int((raw_df[["Open", "High", "Low", "Close", "Adj Close"]] <= 0).sum().sum()),
+        int((raw_df["Volume"] <= 0).sum()),
+    ],
+})
+cleaning_checks"""
+    ),
+    md(
+        "### (4) Feature Engineering\n\n"
+        "特征只使用当日或历史信息构造，避免未来信息泄露。候选特征覆盖收益、动量、均线偏离、波动率、成交量、"
+        "K 线结构、RSI、MACD 和 ATR 等维度。"
+    ),
+    code(
+        r"""# Create features and split the datasets into training and testing data.
+data, feature_cols = build_features(config)
 X_train, X_test, y_train, y_test, train_frame, test_frame = train_test_split_time(
     data, feature_cols, config
 )
+
+feature_summary = pd.DataFrame({
+    "Item": [
+        "Usable sample",
+        "Training sample",
+        "Testing sample",
+        "Candidate feature count",
+        "Training positive rate",
+        "Testing positive rate",
+    ],
+    "Value": [
+        f"{data.index.min().date()} to {data.index.max().date()}, n={len(data)}",
+        f"{train_frame.index.min().date()} to {train_frame.index.max().date()}, n={len(train_frame)}",
+        f"{test_frame.index.min().date()} to {test_frame.index.max().date()}, n={len(test_frame)}",
+        len(feature_cols),
+        round(y_train.mean(), 4),
+        round(y_test.mean(), 4),
+    ],
+})
+feature_summary"""
+    ),
+    md("#### (a) Feature Specification"),
+    code(
+        r"""# Feature specification
+feature_groups = pd.DataFrame({
+    "Category": ["Return/Momentum", "Trend", "Volatility", "Volume", "Candle shape", "Technical indicators", "Calendar"],
+    "Examples": [
+        "log_ret_1, ret_sum_2, ret_sum_3, ret_sum_10, ret_sum_120",
+        "ma_ratio_3, ma_ratio_5, ma_ratio_20, ma_ratio_120",
+        "volatility_20, rolling_min_ret_5, rolling_max_ret_60, atr_20",
+        "volume_ret, volume_z_10, volume_z_20, volume_z_40",
+        "range_pct, gap_ret, upper_shadow, lower_shadow, close_pos",
+        "rsi_6, rsi_14, rsi_21, macd, macd_signal, macd_hist",
+        "dow",
+    ],
+})
+feature_groups"""
+    ),
+    code(
+        r"""# Feature selection subset derived from Question B.
 selection = feature_selection_funnel(X_train, y_train, config)
 final_features = selection["final_features"]
 
-modeling_summary = pd.DataFrame({
-    "项目": [
-        "样本起止", "训练集起止", "测试集起止",
-        "训练集样本数", "测试集样本数", "原始特征数", "最终特征数",
-        "训练集正类比例", "测试集正类比例",
-    ],
-    "数值": [
-        f"{data.index.min().date()} 至 {data.index.max().date()}",
-        f"{train_frame.index.min().date()} 至 {train_frame.index.max().date()}",
-        f"{test_frame.index.min().date()} 至 {test_frame.index.max().date()}",
-        len(train_frame), len(test_frame), len(feature_cols), len(final_features),
-        round(y_train.mean(), 4), round(y_test.mean(), 4),
-    ],
+final_feature_table = pd.DataFrame({
+    "Rank": range(1, len(final_features) + 1),
+    "Feature": final_features,
+    "XGBoost gain": selection["gain_scores"].loc[final_features].round(6).values,
 })
-modeling_summary"""
+final_feature_table.head(20)"""
+    ),
+    md("#### (b) Target or Label Definition"),
+    code(
+        r"""# Define Target
+target_summary = pd.DataFrame({
+    "Dataset": ["Train", "Test"],
+    "Observations": [len(y_train), len(y_test)],
+    "Positive rate": [round(y_train.mean(), 4), round(y_test.mean(), 4)],
+    "Negative rate": [round(1 - y_train.mean(), 4), round(1 - y_test.mean(), 4)],
+})
+
+print(f"Target definition: y=1 if next-day log return > {config.target_threshold:.2%}; otherwise y=0.")
+target_summary"""
     ),
     md(
-        "## 基准模型\n\n"
-        "先使用一组保守的正则化 XGBoost 参数训练基准模型。由于训练集正负样本比例并非完全相等，"
-        "模型使用 `scale_pos_weight` 处理类别不平衡。决策阈值不直接固定为 0.5，而是在训练集上用 Youden J 统计量选择，"
-        "然后应用到测试集。"
+        "### (5) Boosting Ensemble\n\n"
+        "本节先建立一个正则化的 XGBoost 基准模型。模型使用时间顺序切分，不打乱样本；类别权重通过训练集正负样本比例自动设置。"
     ),
     code(
-        r"""base_model = regularized_xgb(y_train, config)
+        r"""# Scale and fit the classifier model
+base_model = regularized_xgb(y_train, config)
 base_eval = evaluate_classifier(
     base_model,
     X_train[final_features],
@@ -356,33 +686,39 @@ base_eval = evaluate_classifier(
 )
 
 base_metrics = pd.DataFrame({
-    "指标": ["训练集 AUC", "测试集 AUC", "Accuracy", "Balanced Accuracy", "决策阈值"],
-    "数值": [
-        base_eval["train_auc"], base_eval["test_auc"], base_eval["accuracy"],
-        base_eval["balanced_accuracy"], base_eval["threshold"],
+    "Metric": ["Train AUC", "Test AUC", "Accuracy", "Balanced Accuracy", "Decision threshold"],
+    "Base XGBoost": [
+        base_eval["train_auc"],
+        base_eval["test_auc"],
+        base_eval["accuracy"],
+        base_eval["balanced_accuracy"],
+        base_eval["threshold"],
     ],
 })
-base_metrics["数值"] = base_metrics["数值"].round(4)
+base_metrics["Base XGBoost"] = base_metrics["Base XGBoost"].round(4)
 base_metrics"""
     ),
+    md("### (6) Hyperparameter Tuning"),
     md(
-        "## 超参数调优\n\n"
-        "调优在训练集内部完成，使用 `TimeSeriesSplit(n_splits=5, gap=1)`，评分指标为 ROC AUC。"
-        "搜索的超参数包括树数量、树深度、学习率、行采样、列采样、最小子节点权重、gamma、L1 和 L2 正则化。"
-        "整个过程完全在本地运行，不使用 Colab 或 W&B。"
+        "#### (a) XGBoost's hyper-parameter\n\n"
+        "调优使用 `RandomizedSearchCV` 和 `TimeSeriesSplit`，目标函数为 ROC AUC。"
+        "参数搜索在训练集上进行时间序列交叉验证，并将最优参数用于样本外测试集评估。"
     ),
     code(
-        r"""search = tune_xgb(X_train[final_features], y_train, config, n_iter=50)
+        r"""# Cross-validation and randomized search
+search = tune_xgb(X_train[final_features], y_train, config, n_iter=50)
 
 best_params = pd.DataFrame({
-    "参数": list(search.best_params_.keys()),
-    "最优值": list(search.best_params_.values()),
+    "Parameter": list(search.best_params_.keys()),
+    "Best value": list(search.best_params_.values()),
 })
-print(f"训练集时间序列交叉验证最佳 ROC AUC: {search.best_score_:.4f}")
+print(f"Best cross-validated ROC AUC: {search.best_score_:.4f}")
 best_params"""
     ),
+    md("#### (b) Randomized search result"),
     code(
-        r"""tuned_eval = evaluate_classifier(
+        r"""# Create tuned model using best parameters from local search.
+tuned_eval = evaluate_classifier(
     search.best_estimator_,
     X_train[final_features],
     y_train,
@@ -390,30 +726,38 @@ best_params"""
     y_test,
 )
 
-tuned_metrics = pd.DataFrame({
-    "指标": ["训练集 AUC", "测试集 AUC", "Accuracy", "Balanced Accuracy", "决策阈值"],
-    "数值": [
-        tuned_eval["train_auc"], tuned_eval["test_auc"], tuned_eval["accuracy"],
-        tuned_eval["balanced_accuracy"], tuned_eval["threshold"],
+metrics_comparison = pd.DataFrame({
+    "Metric": ["Train AUC", "Test AUC", "Accuracy", "Balanced Accuracy", "Decision threshold"],
+    "Base XGBoost": [
+        base_eval["train_auc"],
+        base_eval["test_auc"],
+        base_eval["accuracy"],
+        base_eval["balanced_accuracy"],
+        base_eval["threshold"],
+    ],
+    "Tuned XGBoost": [
+        tuned_eval["train_auc"],
+        tuned_eval["test_auc"],
+        tuned_eval["accuracy"],
+        tuned_eval["balanced_accuracy"],
+        tuned_eval["threshold"],
     ],
 })
-tuned_metrics["数值"] = tuned_metrics["数值"].round(4)
-tuned_metrics"""
+metrics_comparison[["Base XGBoost", "Tuned XGBoost"]] = metrics_comparison[["Base XGBoost", "Tuned XGBoost"]].round(4)
+metrics_comparison"""
     ),
-    md(
-        "## 预测质量评估\n\n"
-        "ROC AUC 衡量模型对正负样本排序的能力。AUC 大于 0.5 说明模型在测试集上优于随机排序，"
-        "但数值并不高，符合短期指数收益难以预测的现实。混淆矩阵和分类报告进一步展示了模型在 0/1 两类上的错误结构。"
-    ),
+    md("### (7) Evaluation"),
     code(
-        r"""print("Confusion matrix [[TN, FP], [FN, TP]]:")
+        r"""# Return the evaluation results
+print("Confusion matrix [[TN, FP], [FN, TP]]:")
 print(tuned_eval["confusion_matrix"])
 print()
 print("Classification report:")
 print(tuned_eval["classification_report"])"""
     ),
     code(
-        r"""fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+        r"""# Display ROC, precision-recall curve and confusion matrix.
+fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
 
 RocCurveDisplay.from_predictions(
     y_test,
@@ -423,25 +767,32 @@ RocCurveDisplay.from_predictions(
     color="#1f77b4",
 )
 axes[0].plot([0, 1], [0, 1], linestyle="--", color="gray", linewidth=1)
-axes[0].set_title("ROC 曲线")
+axes[0].set_title("ROC Curve")
 axes[0].grid(True, alpha=0.3)
+
+PrecisionRecallDisplay.from_predictions(
+    y_test,
+    tuned_eval["test_proba"],
+    ax=axes[1],
+    name="Tuned XGBoost",
+    color="#ff7f0e",
+)
+axes[1].set_title("Precision-Recall Curve")
+axes[1].grid(True, alpha=0.3)
 
 ConfusionMatrixDisplay(
     confusion_matrix=tuned_eval["confusion_matrix"],
-    display_labels=["0：非显著上涨", "1：有效上涨"],
-).plot(ax=axes[1], colorbar=False, cmap="Blues")
-axes[1].set_title("混淆矩阵")
+    display_labels=["0: Non-uptrend", "1: Uptrend"],
+).plot(ax=axes[2], colorbar=False, cmap="Blues")
+axes[2].set_title("Confusion Matrix")
 
 plt.tight_layout()
 plt.show()"""
     ),
-    md(
-        "## 特征重要性\n\n"
-        "下图展示调参后模型的 gain importance。重要性较高的特征包括短期均线偏离、MACD、近期极端收益、"
-        "成交量标准化、RSI 和日内价格结构等。这说明模型主要从短期趋势、反转压力、波动状态和交易活跃度中提取信号。"
-    ),
+    md("#### (a) Feature Importance"),
     code(
-        r"""booster = tuned_eval["model"].get_booster()
+        r"""# Plot the feature importance of the tuned model.
+booster = tuned_eval["model"].get_booster()
 score = booster.get_score(importance_type="gain")
 importance = (
     pd.Series(score, name="gain")
@@ -452,7 +803,7 @@ importance = (
 
 fig, ax = plt.subplots(figsize=(8, 7))
 importance.head(20).sort_values().plot(kind="barh", ax=ax, color="#2ca02c")
-ax.set_title("Top 20 特征重要性：XGBoost Gain")
+ax.set_title("Top 20 Feature Importance by Gain")
 ax.set_xlabel("Gain")
 ax.grid(True, axis="x", alpha=0.3)
 plt.tight_layout()
@@ -460,13 +811,10 @@ plt.show()
 
 importance.head(20).round(4).to_frame()"""
     ),
-    md(
-        "## 可选回测：将预测信号用于简单交易策略\n\n"
-        "作为附加分析，构造一个简单多头策略：当模型预测为 1 时持有沪深 300，当模型预测为 0 时空仓。"
-        "该回测不考虑交易成本、滑点和资金约束，因此只能作为预测信号经济意义的初步检验。"
-    ),
+    md("#### (b) Backtest Analysis"),
     code(
-        r"""backtest = backtest_signal(test_frame, tuned_eval["y_pred"])
+        r"""# Optional add-on: simple backtest of predicted signals.
+backtest = backtest_signal(test_frame, tuned_eval["y_pred"])
 backtest.round(4)"""
     ),
     code(
@@ -481,19 +829,574 @@ wealth = pd.DataFrame({
 
 fig, ax = plt.subplots(figsize=(9, 4.5))
 wealth.plot(ax=ax, linewidth=2)
-ax.set_title("测试集累计财富曲线")
-ax.set_ylabel("累计财富")
+ax.set_title("Cumulative Wealth on Test Set")
+ax.set_ylabel("Cumulative wealth")
 ax.grid(True, alpha=0.3)
 plt.tight_layout()
 plt.show()"""
     ),
     md(
-        "## 结论\n\n"
+        "## Conclusion\n\n"
         "调参后的 XGBoost 在测试集上的 ROC AUC 约为 0.57，说明模型具有一定但较弱的方向排序能力。"
         "Accuracy 和 balanced accuracy 也仅略高于随机水平，这与短期指数收益接近有效市场、噪声较高的事实一致。\n\n"
         "从经济意义看，简单信号策略在测试期内优于买入持有，并且最大回撤更小。不过该结果仍需谨慎解读："
         "正式交易前应加入交易成本、滑点、参数稳定性检验和滚动样本外测试。总体而言，模型不是一个强预测器，"
         "但在受限的监督学习框架下，它展示了比随机分类更好的样本外排序能力和一定的风险控制价值。"
+    ),
+]
+
+
+answer3_cells = [
+    md(
+        "# XGBoost：Predicting Positive Market Moves Using CSI 300\n\n"
+        "本研究使用沪深 300 指数数据建立 XGBoost 二分类模型，目标是预测下一交易日是否出现有效上涨。"
+        "整体实现遵循标准机器学习 workflow：数据读取、EDA、清洗、特征工程、模型训练、调参、评估与回测。"
+    ),
+    md("## Install Packages"),
+    code(
+        r"""# Install packages
+# 检查分析所需依赖是否可导入。
+import importlib.util
+import pandas as pd
+
+required_packages = ["numpy", "pandas", "matplotlib", "sklearn", "xgboost", "scipy"]
+package_status = pd.DataFrame({
+    "Package": required_packages,
+    "Available": [importlib.util.find_spec(pkg) is not None for pkg in required_packages],
+})
+package_status"""
+    ),
+    md("## Import Libraries"),
+    code(
+        r"""# Data manipulation
+from pathlib import Path
+import os
+import sys
+
+import pandas as pd
+import numpy as np
+
+# Visualization
+import matplotlib.pyplot as plt
+
+# Classifier
+from xgboost import XGBClassifier, plot_importance
+
+# Preprocessing and validation
+from sklearn.feature_selection import mutual_info_classif
+from sklearn.model_selection import (
+    train_test_split,
+    TimeSeriesSplit,
+    cross_val_score,
+    RandomizedSearchCV,
+)
+from sklearn.utils.class_weight import compute_sample_weight
+
+# Metrics
+from sklearn.metrics import (
+    accuracy_score,
+    balanced_accuracy_score,
+    RocCurveDisplay,
+    ConfusionMatrixDisplay,
+    PrecisionRecallDisplay,
+    classification_report,
+    roc_auc_score,
+    f1_score,
+    precision_score,
+    recall_score,
+)
+
+plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"]
+plt.rcParams["axes.unicode_minus"] = False
+
+# 设置工作目录以便读取数据。
+if Path.cwd().name != "Exam3" and (Path.cwd() / "Exam3").exists():
+    os.chdir(Path.cwd() / "Exam3")
+
+DATA_PATH = Path("CSI300_2005_2026.csv")"""
+    ),
+    md(
+        "## Section 1: Experiment Tracking\n\n"
+        "实验记录包括资产、样本区间、目标变量定义、训练/测试切分、交叉验证方法、调参范围与最终评估指标。"
+    ),
+    code(
+        r"""# Experiment Tracker
+experiment_config = {
+    "asset": "CSI 300 Index",
+    "data": str(DATA_PATH),
+    "target": "next-day effective uptrend",
+    "target_threshold": 0.0010,
+    "test_size": 0.2,
+    "random_state": 42,
+}
+
+pd.DataFrame(experiment_config.items(), columns=["Item", "Value"])"""
+    ),
+    md(
+        "## Section 2: The workflow\n\n"
+        "We'll employ XGBoost classifier from `scikit-learn` for stock / equity index trend prediction.\n\n"
+        "| Steps        | Workflow                  | Remarks                                                         |\n"
+        "|:-------------|:--------------------------|:----------------------------------------------------------------|\n"
+        "|Step 1        | Ideation                  | Define objective, success metrics     |\n"
+        "|Step 2        | Data Collection           | Gather and integrate data\n"
+        "|Step 3        | Exploratory Data Analysis (Initial) | Broad exploration: stats, distributions, correlations, missing data |\n"
+        "|Step 4        | Data Cleaning           | Handle missing values, outliers, duplicates.            |\n"
+        "|Step 5        | Feature Engineering & Transformation            | Feature creation, scaling, encoding, selection                         |\n"
+        "|        | Subset Validation EDA            | Re-examine chosen features: check distributions, multicollinearity, relationships                      |               \n"
+        "|Step 6        | Modeling                  | Select algorithm(s), train models, tune hyperparameters                           |\n"
+        "|Step 7        | Evaluation                   | Validate using metrics and backtesting       |"
+    ),
+    md("### (1) Load Data"),
+    code(
+        r"""# Load file
+df = pd.read_csv(DATA_PATH, index_col=0, parse_dates=True)
+
+# Calculate returns
+df["Returns"] = np.log(df["Adj Close"]).diff()
+df = df["2010":].copy()
+
+# Verify the output
+df"""
+    ),
+    md("### (2) EDA of Original dataset"),
+    code(
+        r"""# Descriptive statistics
+df.describe().T"""
+    ),
+    code(
+        r"""fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+df["Adj Close"].plot(ax=axes[0], color="#1f77b4", linewidth=1.4)
+axes[0].set_title("CSI 300 Adjusted Close")
+axes[0].set_ylabel("Index level")
+axes[0].grid(True, alpha=0.3)
+
+df["Returns"].plot(ax=axes[1], color="#7f7f7f", linewidth=1.0)
+axes[1].set_title("Daily Log Returns")
+axes[1].set_ylabel("Return")
+axes[1].grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()"""
+    ),
+    md("### (3) Cleaning & Imputation"),
+    code(
+        r"""# Check for missing values
+df.isnull().sum()"""
+    ),
+    md("### (4) Feature Engineering"),
+    code(
+        r"""# Create features (predictors) list
+features_list = []
+for r in range(10, 65, 5):
+    df["Ret_" + str(r)] = df.Returns.rolling(r).sum()
+    df["Std_" + str(r)] = df.Returns.rolling(r).std()
+    features_list.append("Ret_" + str(r))
+    features_list.append("Std_" + str(r))
+
+# Define the forward return and label before dropping NaN values.
+target_threshold = experiment_config["target_threshold"]
+df["Target_Return"] = np.log(df["Adj Close"].shift(-1) / df["Adj Close"])
+df["Label"] = np.where(df["Target_Return"] > target_threshold, 1, 0)
+
+# Drop NaN values
+df.dropna(inplace=True)
+
+print(f"Candidate feature count: {len(features_list)}")
+print(f"Usable observations: {len(df)}")"""
+    ),
+    md("#### (a) Feature Specification"),
+    code(
+        r"""# Convert to NumPy
+X_all = df[features_list]
+X_all.head(2)"""
+    ),
+    code(
+        r"""# Feature subset derived by the funnelling approach.
+y_for_selection = df["Label"].values
+X_train_all, X_test_all, y_train, y_test = train_test_split(
+    X_all, y_for_selection, test_size=0.2, shuffle=False
+)
+sample_weights = compute_sample_weight(class_weight="balanced", y=y_train)
+
+# Filter: remove highly correlated features and rank by mutual information.
+corr = X_train_all.corr().abs()
+upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
+corr_dropped = [column for column in upper.columns if any(upper[column] > 0.98)]
+corr_features = [column for column in X_train_all.columns if column not in corr_dropped]
+
+mi_scores = pd.Series(
+    mutual_info_classif(X_train_all[corr_features], y_train, random_state=42),
+    index=corr_features,
+).sort_values(ascending=False)
+filter_features = list(mi_scores.head(min(18, len(mi_scores))).index)
+
+# Wrapper: choose feature count by time-series CV with XGBoost.
+tscv = TimeSeriesSplit(n_splits=5, gap=1)
+wrapper_rows = []
+for n_features in [8, 10, 12, 14, 16, 18]:
+    cols = filter_features[: min(n_features, len(filter_features))]
+    selector_model = XGBClassifier(
+        verbosity=0,
+        eval_metric="logloss",
+        n_estimators=100,
+        max_depth=3,
+        learning_rate=0.05,
+    )
+    cv_scores = cross_val_score(
+        selector_model,
+        X_train_all[cols],
+        y_train,
+        cv=tscv,
+        scoring="roc_auc",
+        params={"sample_weight": sample_weights},
+        n_jobs=1,
+    )
+    wrapper_rows.append({
+        "n_features": len(cols),
+        "cv_roc_auc_mean": cv_scores.mean(),
+        "cv_roc_auc_std": cv_scores.std(),
+        "features": cols,
+    })
+
+wrapper_table = pd.DataFrame(wrapper_rows).drop_duplicates("n_features")
+best_wrapper = wrapper_table.sort_values(["cv_roc_auc_mean", "n_features"], ascending=[False, True]).iloc[0]
+wrapper_features = list(best_wrapper["features"])
+
+# Embedded: rank selected features using XGBoost gain importance.
+embedded_model = XGBClassifier(
+    verbosity=0,
+    eval_metric="logloss",
+    n_estimators=100,
+    max_depth=3,
+    learning_rate=0.05,
+    importance_type="gain",
+)
+embedded_model.fit(X_train_all[wrapper_features], y_train, sample_weight=sample_weights)
+gain_scores = pd.Series(embedded_model.feature_importances_, index=wrapper_features).sort_values(ascending=False)
+
+final_features = list(gain_scores.head(min(10, len(gain_scores))).index)
+X = df[final_features]
+
+pd.DataFrame({
+    "Rank": range(1, len(final_features) + 1),
+    "Feature": final_features,
+    "Gain": gain_scores.loc[final_features].round(6).values,
+})"""
+    ),
+    md("#### (b) Target or Label Definition"),
+    code(
+        r"""# Define Target
+y = df["Label"].values
+y"""
+    ),
+    code(
+        r"""# label count
+class_labels = np.bincount(y)
+class_labels"""
+    ),
+    md("### (5) Boosting Ensemble"),
+    code(
+        r"""# Splitting the datasets into training and testing data.
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+# Output the train and test data size
+print(f"Train and Test Size {len(X_train)}, {len(X_test)}")"""
+    ),
+    code(
+        r"""# Scale and fit the classifier model
+
+# For binary or multiclass classification
+sample_weights = compute_sample_weight(class_weight="balanced", y=y_train)
+
+base_model = XGBClassifier(
+    verbosity=0,
+    eval_metric="logloss",
+)
+
+base_model.fit(
+    X_train,
+    y_train,
+    sample_weight=sample_weights,
+)"""
+    ),
+    code(
+        r"""# Predicting the test dataset
+y_pred = base_model.predict(X_test)
+
+# Predict Probabilities
+y_proba = base_model.predict_proba(X_test)"""
+    ),
+    code(
+        r"""# Accuracy Scores
+acc_train = accuracy_score(y_train, base_model.predict(X_train))
+acc_test = accuracy_score(y_test, y_pred)
+
+print(f"Train Accuracy: {acc_train:0.4}, Test Accuracy: {acc_test:0.4}")"""
+    ),
+    code(
+        r"""# Balanced Accuracy Scores
+bal_acc_train = balanced_accuracy_score(y_train, base_model.predict(X_train))
+bal_acc_test = balanced_accuracy_score(y_test, y_pred)
+
+print(f"Train Balanced Accuracy: {bal_acc_train:0.4}, Test Balanced Accuracy: {bal_acc_test:0.4}")"""
+    ),
+    code(
+        r"""# Display confussion matrix
+disp_cm = ConfusionMatrixDisplay.from_estimator(
+    base_model,
+    X_test,
+    y_test,
+    display_labels=base_model.classes_,
+    cmap=plt.cm.Blues,
+)
+disp_cm.ax_.set_title("Confusion matrix")
+plt.show()"""
+    ),
+    code(
+        r"""# Classification Report
+print(classification_report(y_test, y_pred))"""
+    ),
+    code(
+        r"""# Display ROCCurve
+disp_roc = RocCurveDisplay.from_estimator(
+    base_model,
+    X_test,
+    y_test,
+    name="XGBoost",
+)
+
+disp_roc.ax_.set_title("ROC Curve")
+plt.plot([0, 1], [0, 1], linestyle="--")
+plt.show()"""
+    ),
+    code(
+        r"""# Display PR Curve
+disp_pr = PrecisionRecallDisplay.from_estimator(
+    base_model,
+    X_test,
+    y_test,
+    name="XGBoost",
+)
+
+disp_pr.ax_.set_title("Precision-Recall Curve")
+plt.show()"""
+    ),
+    md("### (6) Hyperparameter Tuning"),
+    md("#### (a) XGBoost's hyper-parameter"),
+    code(
+        r"""# Timeseries Cross Validation 2-split Demonstration
+tscv_demo = TimeSeriesSplit(n_splits=2, gap=1)
+for train, test in tscv_demo.split(X):
+    print(f"Train: {train}, Test: {test}")"""
+    ),
+    code(
+        r"""# Cross-validation
+tscv = TimeSeriesSplit(n_splits=5, gap=1)"""
+    ),
+    code(
+        r"""# Get params list
+base_model.get_params()"""
+    ),
+    md("#### (b) Randomized Search"),
+    code(
+        r"""# Randomized search configuration
+param_grid = {
+    "learning_rate": [0.01, 0.03, 0.05, 0.08, 0.10],
+    "max_depth": [1, 2, 3],
+    "min_child_weight": [3, 5, 8, 12, 16],
+    "gamma": [0.0, 0.5, 1.0, 2.0, 4.0],
+    "colsample_bytree": [0.6, 0.75, 0.9, 1.0],
+    "subsample": [0.6, 0.75, 0.9, 1.0],
+    "n_estimators": [80, 120, 200, 300],
+    "reg_alpha": [0, 0.1, 0.5, 1.0],
+    "reg_lambda": [1, 3, 5, 10],
+}
+
+search = RandomizedSearchCV(
+    estimator=XGBClassifier(verbosity=0, eval_metric="logloss"),
+    param_distributions=param_grid,
+    n_iter=50,
+    scoring="roc_auc",
+    cv=tscv,
+    random_state=42,
+    n_jobs=1,
+)
+
+search.fit(X_train, y_train, sample_weight=sample_weights)
+best_params = search.best_params_
+
+print("Best parameters found by randomized search:")
+for k, v in best_params.items():
+    print(f"  {k}: {v}")
+print(f"Best cv/roc_auc_mean: {search.best_score_:.4f}")"""
+    ),
+    code(
+        r"""# Create tuned model using best parameters
+tuned_model = XGBClassifier(
+    **best_params,
+    verbosity=0,
+    eval_metric="logloss",
+)
+
+# Fit with evaluation tracking
+tuned_model.fit(
+    X_train,
+    y_train,
+    sample_weight=sample_weights,
+    eval_set=[(X_train, y_train), (X_test, y_test)],
+    verbose=False,
+)
+
+print("Tuned model training completed successfully!")"""
+    ),
+    code(
+        r"""# Return the evaluation results
+evals_result = tuned_model.evals_result()
+pd.DataFrame({
+    "train_logloss": evals_result["validation_0"]["logloss"],
+    "test_logloss": evals_result["validation_1"]["logloss"],
+}).tail()"""
+    ),
+    code(
+        r"""# Cross validation score with tuned model
+cv_scores = cross_val_score(
+    tuned_model,
+    X_train,
+    y_train,
+    cv=tscv,
+    scoring="f1",
+    params={"sample_weight": sample_weights},
+    n_jobs=1,
+)
+print(f"Mean CV Score: {cv_scores.mean():.4f} (+/- {cv_scores.std() * 2:.4f})")"""
+    ),
+    code(
+        r"""# Predicting the test dataset
+y_pred = tuned_model.predict(X_test)
+y_proba = tuned_model.predict_proba(X_test)
+
+# Measure Accuracy
+acc_train = accuracy_score(y_train, tuned_model.predict(X_train))
+acc_test = accuracy_score(y_test, y_pred)
+
+print(f"\n Training Accuracy \t: {acc_train :0.4} \n Test Accuracy \t\t: {acc_test :0.4}")"""
+    ),
+    code(
+        r"""bal_acc_train = balanced_accuracy_score(y_train, tuned_model.predict(X_train))
+bal_acc_test = balanced_accuracy_score(y_test, y_pred)
+
+print(f"Train Balanced Accuracy: {bal_acc_train:0.4}, Test Balanced Accuracy: {bal_acc_test:0.4}")
+print(f"Test ROC AUC: {roc_auc_score(y_test, y_proba[:, 1]):0.4}")
+print(f"Test F1: {f1_score(y_test, y_pred):0.4}")
+print(f"Test Precision: {precision_score(y_test, y_pred):0.4}")
+print(f"Test Recall: {recall_score(y_test, y_pred):0.4}")"""
+    ),
+    code(
+        r"""# Tuned Model: Evaluation
+
+# Confusion Matrix
+disp = ConfusionMatrixDisplay.from_estimator(
+    tuned_model,
+    X_test,
+    y_test,
+    display_labels=tuned_model.classes_,
+    cmap=plt.cm.Blues,
+)
+disp.ax_.set_title("Confusion matrix")
+plt.show()
+
+# Classification Report
+print(classification_report(y_test, y_pred))
+
+# ROC Curve
+disp_roc = RocCurveDisplay.from_estimator(
+    tuned_model,
+    X_test,
+    y_test,
+    name="Tuned XGBoost",
+)
+disp_roc.ax_.set_title("ROC Curve")
+plt.plot([0, 1], [0, 1], linestyle="--")
+plt.show()
+
+# PR Curve
+disp_pr = PrecisionRecallDisplay.from_estimator(
+    tuned_model,
+    X_test,
+    y_test,
+    name="Tuned XGBoost",
+)
+disp_pr.ax_.set_title("Precision-Recall Curve")
+plt.show()"""
+    ),
+    md("### (7) Evaluation"),
+    md("#### (a) Feature Importance"),
+    code(
+        r"""# Plot the feature importance of the tuned model
+plot_importance(tuned_model, importance_type="weight", title="Tuned Model Feature Importance", show_values=False)
+plt.tight_layout()
+plt.grid(True, alpha=0.3)
+plt.show()"""
+    ),
+    code(
+        r"""# The Gain is the most relevant attribute to interpret the relative importance of each feature.
+gain_importance = tuned_model.get_booster().get_score(importance_type="gain")
+pd.Series(gain_importance).sort_values(ascending=False).to_frame("gain")"""
+    ),
+    code(
+        r"""# Feature importance by gain
+plot_importance(tuned_model, importance_type="gain", show_values=False)
+plt.tight_layout()
+plt.grid(True, alpha=0.3)
+plt.show()"""
+    ),
+    md("#### (b) Backtest Analysis"),
+    code(
+        r"""# Optional add-on: simple backtest of predicted signals.
+test_index = X_test.index
+signal = pd.Series(y_pred, index=test_index, name="signal")
+strategy_returns = signal * df.loc[test_index, "Target_Return"]
+buy_hold_returns = df.loc[test_index, "Target_Return"]
+
+def performance(log_returns, exposure):
+    wealth = np.exp(log_returns.cumsum())
+    annual_return = wealth.iloc[-1] ** (252 / len(log_returns)) - 1
+    annual_volatility = log_returns.std() * np.sqrt(252)
+    sharpe = annual_return / annual_volatility if annual_volatility > 0 else np.nan
+    drawdown = wealth / wealth.cummax() - 1
+    return pd.Series({
+        "total_return": wealth.iloc[-1] - 1,
+        "annual_return": annual_return,
+        "annual_volatility": annual_volatility,
+        "sharpe": sharpe,
+        "max_drawdown": drawdown.min(),
+        "exposure": exposure,
+    })
+
+backtest = pd.DataFrame({
+    "strategy": performance(strategy_returns, signal.mean()),
+    "buy_hold": performance(buy_hold_returns, 1.0),
+})
+backtest.round(4)"""
+    ),
+    code(
+        r"""wealth = pd.DataFrame({
+    "Strategy": np.exp(strategy_returns.cumsum()),
+    "Buy & Hold": np.exp(buy_hold_returns.cumsum()),
+})
+
+fig, ax = plt.subplots(figsize=(9, 4.5))
+wealth.plot(ax=ax, linewidth=2)
+ax.set_title("Cumulative Wealth on Test Set")
+ax.set_ylabel("Cumulative wealth")
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()"""
+    ),
+    md(
+        "## Conclusion\n\n"
+        "模型在测试集上的 ROC AUC 高于 0.5，说明 XGBoost 对下一交易日有效上涨具有一定排序能力，但预测能力仍然较弱。"
+        "这与短期指数收益噪声高、方向预测困难的经验相符。简单信号回测用于检验预测结果的经济含义，但未考虑交易成本和滑点，"
+        "因此只能作为附加参考。"
     ),
 ]
 
