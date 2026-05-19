@@ -1401,6 +1401,873 @@ plt.show()"""
 ]
 
 
+# Final optimized Answer2/Answer3 definitions. The report structure follows the
+# course workflow, while the feature set and model search space are adapted to
+# the CSI 300 dataset.
+answer2_cells = [
+    md(
+        "# Question B：使用 Funnelling Approach 进行特征选择\n\n"
+        "本题使用沪深 300 指数数据构造较丰富的候选特征池，并通过 filter、wrapper 和 embedded 三类方法逐步筛选特征。"
+        "候选特征覆盖收益、波动率、趋势、成交量、K 线结构和常用技术指标。"
+    ),
+    code(
+        r"""import warnings
+warnings.filterwarnings("ignore")
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.stats import loguniform, randint, uniform
+from xgboost import XGBClassifier
+from sklearn.feature_selection import mutual_info_classif
+from sklearn.model_selection import train_test_split, TimeSeriesSplit, cross_val_score
+from sklearn.utils.class_weight import compute_sample_weight
+
+plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"]
+plt.rcParams["axes.unicode_minus"] = False"""
+    ),
+    md("## 候选特征构造"),
+    code(
+        r"""# Load file
+df = pd.read_csv("CSI300_2005_2026.csv", parse_dates=["Date"]).sort_values("Date").set_index("Date")
+df = df["2010":].copy()
+
+# Core returns and price/volume structure
+df["log_ret_1"] = np.log(df["Adj Close"]).diff()
+df["simple_ret_1"] = df["Adj Close"].pct_change()
+df["intraday_ret"] = df["Close"] / df["Open"] - 1
+df["range_pct"] = df["High"] / df["Low"] - 1
+df["gap_ret"] = df["Open"] / df["Close"].shift(1) - 1
+df["upper_shadow"] = (df["High"] - df[["Open", "Close"]].max(axis=1)) / df["Close"]
+df["lower_shadow"] = (df[["Open", "Close"]].min(axis=1) - df["Low"]) / df["Close"]
+df["body_pct"] = (df["Close"] - df["Open"]) / df["Open"]
+df["close_pos"] = (df["Close"] - df["Low"]) / (df["High"] - df["Low"]).replace(0, np.nan)
+df["volume_ret"] = np.log(df["Volume"]).diff()
+df["dow"] = df.index.dayofweek
+
+# Rolling return, volatility, trend and volume features
+for window in [2, 3, 5, 10, 20, 40, 60, 120]:
+    df[f"ret_sum_{window}"] = df["log_ret_1"].rolling(window).sum()
+    df[f"ret_mean_{window}"] = df["log_ret_1"].rolling(window).mean()
+    df[f"volatility_{window}"] = df["log_ret_1"].rolling(window).std()
+    df[f"ma_ratio_{window}"] = df["Adj Close"] / df["Adj Close"].rolling(window).mean() - 1
+    df[f"volume_z_{window}"] = (
+        df["Volume"] - df["Volume"].rolling(window).mean()
+    ) / df["Volume"].rolling(window).std()
+    df[f"rolling_min_ret_{window}"] = df["log_ret_1"].rolling(window).min()
+    df[f"rolling_max_ret_{window}"] = df["log_ret_1"].rolling(window).max()
+
+# RSI indicators
+for window in [6, 14, 21]:
+    delta = df["Adj Close"].diff()
+    gain = delta.clip(lower=0).rolling(window).mean()
+    loss = (-delta.clip(upper=0)).rolling(window).mean()
+    rs = gain / loss.replace(0, np.nan)
+    df[f"rsi_{window}"] = 100 - (100 / (1 + rs))
+
+# MACD indicators
+ema12 = df["Adj Close"].ewm(span=12, adjust=False).mean()
+ema26 = df["Adj Close"].ewm(span=26, adjust=False).mean()
+df["macd"] = ema12 - ema26
+df["macd_signal"] = df["macd"].ewm(span=9, adjust=False).mean()
+df["macd_hist"] = df["macd"] - df["macd_signal"]
+
+# ATR indicators
+true_range = pd.concat(
+    [
+        df["High"] - df["Low"],
+        (df["High"] - df["Close"].shift(1)).abs(),
+        (df["Low"] - df["Close"].shift(1)).abs(),
+    ],
+    axis=1,
+).max(axis=1)
+for window in [14, 20]:
+    df[f"atr_{window}"] = true_range.rolling(window).mean() / df["Adj Close"]
+
+# Target: effective next-day uptrend
+target_threshold = 0.0015
+df["next_log_ret"] = df["log_ret_1"].shift(-1)
+df["Label"] = np.where(df["next_log_ret"] > target_threshold, 1, 0)
+df.loc[df["next_log_ret"].isna(), "Label"] = np.nan
+
+excluded = ["Open", "High", "Low", "Close", "Adj Close", "Volume", "next_log_ret", "Label"]
+features_list = [col for col in df.columns if col not in excluded]
+
+data = df[features_list + ["Label", "next_log_ret"]].replace([np.inf, -np.inf], np.nan).dropna()
+X = data[features_list]
+y = data["Label"].astype(int).values
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+sample_weights = compute_sample_weight(class_weight="balanced", y=y_train)
+
+pd.DataFrame({
+    "Item": ["Usable observations", "Training observations", "Testing observations", "Candidate features", "Training positive rate", "Testing positive rate"],
+    "Value": [len(data), len(X_train), len(X_test), len(features_list), round(y_train.mean(), 4), round(y_test.mean(), 4)],
+})"""
+    ),
+    md(
+        "## Step 1：Filter 方法\n\n"
+        "Filter 阶段先删除训练集中相关系数绝对值高于 0.98 的冗余变量，然后用 mutual information 对剩余变量排序。"
+    ),
+    code(
+        r"""corr = X_train.corr().abs()
+upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
+corr_dropped = [column for column in upper.columns if any(upper[column] > 0.98)]
+corr_features = [column for column in X_train.columns if column not in corr_dropped]
+
+mi_scores = pd.Series(
+    mutual_info_classif(X_train[corr_features], y_train, random_state=42),
+    index=corr_features,
+).sort_values(ascending=False)
+
+filter_features = list(mi_scores.head(min(64, len(mi_scores))).index)
+
+print(f"Initial feature count: {len(features_list)}")
+print(f"Dropped by correlation filter: {len(corr_dropped)}")
+print(f"Features kept after filter step: {len(filter_features)}")
+mi_scores.head(20).to_frame("mutual_information")"""
+    ),
+    md(
+        "## Step 2：Wrapper 方法\n\n"
+        "Wrapper 阶段使用 XGBoost 和 `TimeSeriesSplit`，比较不同特征数量下的交叉验证 ROC AUC。"
+        "由于标签存在轻微不平衡，训练中使用 `compute_sample_weight` 生成的样本权重。"
+    ),
+    code(
+        r"""tscv = TimeSeriesSplit(n_splits=5, gap=1)
+base_selector_params = {
+    "verbosity": 0,
+    "eval_metric": "logloss",
+    "tree_method": "hist",
+    "random_state": 42,
+    "n_jobs": -1,
+    "n_estimators": 120,
+    "max_depth": 2,
+    "learning_rate": 0.035,
+    "subsample": 0.75,
+    "colsample_bytree": 0.75,
+    "min_child_weight": 5,
+    "gamma": 1.0,
+    "reg_alpha": 0.5,
+    "reg_lambda": 3.0,
+}
+
+wrapper_rows = []
+for n_features in [10, 15, 20, 25, 30, 35, 40, 50, len(filter_features)]:
+    cols = filter_features[: min(n_features, len(filter_features))]
+    selector_model = XGBClassifier(**base_selector_params)
+    cv_scores = cross_val_score(
+        selector_model,
+        X_train[cols],
+        y_train,
+        cv=tscv,
+        scoring="roc_auc",
+        params={"sample_weight": sample_weights},
+        n_jobs=1,
+    )
+    wrapper_rows.append({
+        "n_features": len(cols),
+        "cv_roc_auc_mean": cv_scores.mean(),
+        "cv_roc_auc_std": cv_scores.std(),
+        "features": cols,
+    })
+
+wrapper_table = pd.DataFrame(wrapper_rows).drop_duplicates("n_features")
+best_wrapper = wrapper_table.sort_values(["cv_roc_auc_mean", "n_features"], ascending=[False, True]).iloc[0]
+wrapper_features = list(best_wrapper["features"])
+
+wrapper_table.drop(columns=["features"]).round(4)"""
+    ),
+    md(
+        "## Step 3：Embedded 方法\n\n"
+        "Embedded 阶段在 wrapper 选出的特征上训练 XGBoost，并使用 gain importance 排序；随后再次用时间序列交叉验证决定最终保留数量。"
+    ),
+    code(
+        r"""embedded_model = XGBClassifier(**base_selector_params, importance_type="gain")
+embedded_model.fit(X_train[wrapper_features], y_train, sample_weight=sample_weights)
+
+gain_scores = pd.Series(
+    embedded_model.feature_importances_,
+    index=wrapper_features,
+).sort_values(ascending=False)
+
+embedded_rows = []
+for n_features in [10, 15, 20, 25, 30, 35, 40, len(gain_scores)]:
+    cols = list(gain_scores.head(min(n_features, len(gain_scores))).index)
+    selector_model = XGBClassifier(**base_selector_params)
+    cv_scores = cross_val_score(
+        selector_model,
+        X_train[cols],
+        y_train,
+        cv=tscv,
+        scoring="roc_auc",
+        params={"sample_weight": sample_weights},
+        n_jobs=1,
+    )
+    embedded_rows.append({
+        "n_features": len(cols),
+        "cv_roc_auc_mean": cv_scores.mean(),
+        "cv_roc_auc_std": cv_scores.std(),
+        "features": cols,
+    })
+
+embedded_table = pd.DataFrame(embedded_rows).drop_duplicates("n_features")
+best_embedded = embedded_table.sort_values(["cv_roc_auc_mean", "n_features"], ascending=[False, True]).iloc[0]
+final_features = list(best_embedded["features"])
+
+display(embedded_table.drop(columns=["features"]).round(4))
+
+pd.DataFrame({
+    "Rank": range(1, len(final_features) + 1),
+    "Feature": final_features,
+    "Gain": gain_scores.loc[final_features].round(6).values,
+})"""
+    ),
+    md(
+        "## 特征选择结论\n\n"
+        "最终特征由三层漏斗共同决定：相关性和互信息完成初筛，时间序列交叉验证完成 wrapper 选择，"
+        "XGBoost gain importance 和再次交叉验证完成 embedded 选择。该特征子集将用于第 3 题的模型训练与调参。"
+    ),
+]
+
+
+answer3_cells = [
+    md(
+        "# XGBoost：Predicting Positive Market Moves Using CSI 300\n\n"
+        "本研究使用沪深 300 指数数据建立 XGBoost 二分类模型，目标是预测下一交易日是否出现有效上涨。"
+        "章节结构遵循标准机器学习 workflow，特征集和模型参数根据沪深 300 数据进行设计与调优。"
+    ),
+    md("## Install Packages"),
+    code(
+        r"""# Install packages
+import importlib.util
+import pandas as pd
+
+required_packages = ["numpy", "pandas", "matplotlib", "sklearn", "xgboost", "scipy"]
+package_status = pd.DataFrame({
+    "Package": required_packages,
+    "Available": [importlib.util.find_spec(pkg) is not None for pkg in required_packages],
+})
+package_status"""
+    ),
+    md("## Import Libraries"),
+    code(
+        r"""# Data manipulation
+from pathlib import Path
+import os
+import warnings
+
+warnings.filterwarnings("ignore")
+
+import pandas as pd
+import numpy as np
+
+# Visualization
+import matplotlib.pyplot as plt
+
+# Classifier
+from xgboost import XGBClassifier, plot_importance
+
+# Preprocessing and validation
+from scipy.stats import loguniform, randint, uniform
+from sklearn.feature_selection import mutual_info_classif
+from sklearn.model_selection import (
+    train_test_split,
+    TimeSeriesSplit,
+    cross_val_score,
+    RandomizedSearchCV,
+)
+from sklearn.utils.class_weight import compute_sample_weight
+
+# Metrics
+from sklearn.metrics import (
+    accuracy_score,
+    balanced_accuracy_score,
+    RocCurveDisplay,
+    ConfusionMatrixDisplay,
+    PrecisionRecallDisplay,
+    classification_report,
+    roc_auc_score,
+    f1_score,
+    precision_score,
+    recall_score,
+)
+
+plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"]
+plt.rcParams["axes.unicode_minus"] = False
+
+if Path.cwd().name != "Exam3" and (Path.cwd() / "Exam3").exists():
+    os.chdir(Path.cwd() / "Exam3")
+
+DATA_PATH = Path("CSI300_2005_2026.csv")"""
+    ),
+    md(
+        "## Section 1: Experiment Tracking\n\n"
+        "实验记录包括资产、样本区间、目标变量定义、训练/测试切分、交叉验证方法、调参范围与最终评估指标。"
+    ),
+    code(
+        r"""# Experiment Tracker
+experiment_config = {
+    "asset": "CSI 300 Index",
+    "data": str(DATA_PATH),
+    "target": "next-day effective uptrend",
+    "target_threshold": 0.0015,
+    "test_size": 0.2,
+    "random_state": 42,
+}
+
+pd.DataFrame(experiment_config.items(), columns=["Item", "Value"])"""
+    ),
+    md(
+        "## Section 2: The workflow\n\n"
+        "We'll employ XGBoost classifier from `scikit-learn` for stock / equity index trend prediction.\n\n"
+        "| Steps        | Workflow                  | Remarks                                                         |\n"
+        "|:-------------|:--------------------------|:----------------------------------------------------------------|\n"
+        "|Step 1        | Ideation                  | Define objective, success metrics     |\n"
+        "|Step 2        | Data Collection           | Gather and integrate data\n"
+        "|Step 3        | Exploratory Data Analysis (Initial) | Broad exploration: stats, distributions, correlations, missing data |\n"
+        "|Step 4        | Data Cleaning           | Handle missing values, outliers, duplicates.            |\n"
+        "|Step 5        | Feature Engineering & Transformation            | Feature creation, scaling, encoding, selection                         |\n"
+        "|        | Subset Validation EDA            | Re-examine chosen features: check distributions, multicollinearity, relationships                      |               \n"
+        "|Step 6        | Modeling                  | Select algorithm(s), train models, tune hyperparameters                           |\n"
+        "|Step 7        | Evaluation                   | Validate using metrics and backtesting       |"
+    ),
+    md("### (1) Load Data"),
+    code(
+        r"""# Load file
+df = pd.read_csv(DATA_PATH, parse_dates=["Date"]).sort_values("Date").set_index("Date")
+df = df["2010":].copy()
+
+# Calculate returns
+df["log_ret_1"] = np.log(df["Adj Close"]).diff()
+
+# Verify the output
+df.head()"""
+    ),
+    md("### (2) EDA of Original dataset"),
+    code(
+        r"""# Descriptive statistics
+df.describe().T"""
+    ),
+    code(
+        r"""fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+df["Adj Close"].plot(ax=axes[0], color="#1f77b4", linewidth=1.4)
+axes[0].set_title("CSI 300 Adjusted Close")
+axes[0].set_ylabel("Index level")
+axes[0].grid(True, alpha=0.3)
+
+df["log_ret_1"].plot(ax=axes[1], color="#7f7f7f", linewidth=1.0)
+axes[1].set_title("Daily Log Returns")
+axes[1].set_ylabel("Return")
+axes[1].grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()"""
+    ),
+    md("### (3) Cleaning & Imputation"),
+    code(
+        r"""# Check for missing values
+df.isnull().sum()"""
+    ),
+    md(
+        "### (4) Feature Engineering\n\n"
+        "候选特征不仅包括滚动收益和滚动波动率，也包括均线偏离、成交量标准化、近期极端收益、K 线结构、RSI、MACD 和 ATR。"
+    ),
+    code(
+        r"""# Core returns and price/volume structure
+df["simple_ret_1"] = df["Adj Close"].pct_change()
+df["intraday_ret"] = df["Close"] / df["Open"] - 1
+df["range_pct"] = df["High"] / df["Low"] - 1
+df["gap_ret"] = df["Open"] / df["Close"].shift(1) - 1
+df["upper_shadow"] = (df["High"] - df[["Open", "Close"]].max(axis=1)) / df["Close"]
+df["lower_shadow"] = (df[["Open", "Close"]].min(axis=1) - df["Low"]) / df["Close"]
+df["body_pct"] = (df["Close"] - df["Open"]) / df["Open"]
+df["close_pos"] = (df["Close"] - df["Low"]) / (df["High"] - df["Low"]).replace(0, np.nan)
+df["volume_ret"] = np.log(df["Volume"]).diff()
+df["dow"] = df.index.dayofweek
+
+# Create features (predictors) list
+features_list = [
+    "log_ret_1", "simple_ret_1", "intraday_ret", "range_pct", "gap_ret",
+    "upper_shadow", "lower_shadow", "body_pct", "close_pos", "volume_ret", "dow",
+]
+
+for window in [2, 3, 5, 10, 20, 40, 60, 120]:
+    df[f"ret_sum_{window}"] = df["log_ret_1"].rolling(window).sum()
+    df[f"ret_mean_{window}"] = df["log_ret_1"].rolling(window).mean()
+    df[f"volatility_{window}"] = df["log_ret_1"].rolling(window).std()
+    df[f"ma_ratio_{window}"] = df["Adj Close"] / df["Adj Close"].rolling(window).mean() - 1
+    df[f"volume_z_{window}"] = (
+        df["Volume"] - df["Volume"].rolling(window).mean()
+    ) / df["Volume"].rolling(window).std()
+    df[f"rolling_min_ret_{window}"] = df["log_ret_1"].rolling(window).min()
+    df[f"rolling_max_ret_{window}"] = df["log_ret_1"].rolling(window).max()
+    features_list += [
+        f"ret_sum_{window}", f"ret_mean_{window}", f"volatility_{window}",
+        f"ma_ratio_{window}", f"volume_z_{window}",
+        f"rolling_min_ret_{window}", f"rolling_max_ret_{window}",
+    ]
+
+for window in [6, 14, 21]:
+    delta = df["Adj Close"].diff()
+    gain = delta.clip(lower=0).rolling(window).mean()
+    loss = (-delta.clip(upper=0)).rolling(window).mean()
+    rs = gain / loss.replace(0, np.nan)
+    df[f"rsi_{window}"] = 100 - (100 / (1 + rs))
+    features_list.append(f"rsi_{window}")
+
+ema12 = df["Adj Close"].ewm(span=12, adjust=False).mean()
+ema26 = df["Adj Close"].ewm(span=26, adjust=False).mean()
+df["macd"] = ema12 - ema26
+df["macd_signal"] = df["macd"].ewm(span=9, adjust=False).mean()
+df["macd_hist"] = df["macd"] - df["macd_signal"]
+features_list += ["macd", "macd_signal", "macd_hist"]
+
+true_range = pd.concat(
+    [
+        df["High"] - df["Low"],
+        (df["High"] - df["Close"].shift(1)).abs(),
+        (df["Low"] - df["Close"].shift(1)).abs(),
+    ],
+    axis=1,
+).max(axis=1)
+for window in [14, 20]:
+    df[f"atr_{window}"] = true_range.rolling(window).mean() / df["Adj Close"]
+    features_list.append(f"atr_{window}")
+
+# Define the forward return and label before dropping NaN values.
+target_threshold = experiment_config["target_threshold"]
+df["next_log_ret"] = df["log_ret_1"].shift(-1)
+df["Label"] = np.where(df["next_log_ret"] > target_threshold, 1, 0)
+df.loc[df["next_log_ret"].isna(), "Label"] = np.nan
+
+# Drop NaN values
+df = df[features_list + ["Label", "next_log_ret"]].replace([np.inf, -np.inf], np.nan).dropna()
+
+print(f"Candidate feature count: {len(features_list)}")
+print(f"Usable observations: {len(df)}")"""
+    ),
+    md("#### (a) Feature Specification"),
+    code(
+        r"""# Convert to NumPy
+X_all = df[features_list]
+X_all.head(2)"""
+    ),
+    code(
+        r"""# Feature subset derived by the funnelling approach.
+y_for_selection = df["Label"].astype(int).values
+X_train_all, X_test_all, y_train, y_test = train_test_split(
+    X_all, y_for_selection, test_size=0.2, shuffle=False
+)
+sample_weights = compute_sample_weight(class_weight="balanced", y=y_train)
+
+corr = X_train_all.corr().abs()
+upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
+corr_dropped = [column for column in upper.columns if any(upper[column] > 0.98)]
+corr_features = [column for column in X_train_all.columns if column not in corr_dropped]
+
+mi_scores = pd.Series(
+    mutual_info_classif(X_train_all[corr_features], y_train, random_state=42),
+    index=corr_features,
+).sort_values(ascending=False)
+filter_features = list(mi_scores.head(min(64, len(mi_scores))).index)
+
+tscv = TimeSeriesSplit(n_splits=5, gap=1)
+base_selector_params = {
+    "verbosity": 0,
+    "eval_metric": "logloss",
+    "tree_method": "hist",
+    "random_state": 42,
+    "n_jobs": -1,
+    "n_estimators": 120,
+    "max_depth": 2,
+    "learning_rate": 0.035,
+    "subsample": 0.75,
+    "colsample_bytree": 0.75,
+    "min_child_weight": 5,
+    "gamma": 1.0,
+    "reg_alpha": 0.5,
+    "reg_lambda": 3.0,
+}
+
+wrapper_rows = []
+for n_features in [10, 15, 20, 25, 30, 35, 40, 50, len(filter_features)]:
+    cols = filter_features[: min(n_features, len(filter_features))]
+    selector_model = XGBClassifier(**base_selector_params)
+    cv_scores = cross_val_score(
+        selector_model,
+        X_train_all[cols],
+        y_train,
+        cv=tscv,
+        scoring="roc_auc",
+        params={"sample_weight": sample_weights},
+        n_jobs=1,
+    )
+    wrapper_rows.append({
+        "n_features": len(cols),
+        "cv_roc_auc_mean": cv_scores.mean(),
+        "features": cols,
+    })
+
+wrapper_table = pd.DataFrame(wrapper_rows).drop_duplicates("n_features")
+best_wrapper = wrapper_table.sort_values(["cv_roc_auc_mean", "n_features"], ascending=[False, True]).iloc[0]
+wrapper_features = list(best_wrapper["features"])
+
+embedded_model = XGBClassifier(**base_selector_params, importance_type="gain")
+embedded_model.fit(X_train_all[wrapper_features], y_train, sample_weight=sample_weights)
+gain_scores = pd.Series(embedded_model.feature_importances_, index=wrapper_features).sort_values(ascending=False)
+
+embedded_rows = []
+for n_features in [10, 15, 20, 25, 30, 35, 40, len(gain_scores)]:
+    cols = list(gain_scores.head(min(n_features, len(gain_scores))).index)
+    selector_model = XGBClassifier(**base_selector_params)
+    cv_scores = cross_val_score(
+        selector_model,
+        X_train_all[cols],
+        y_train,
+        cv=tscv,
+        scoring="roc_auc",
+        params={"sample_weight": sample_weights},
+        n_jobs=1,
+    )
+    embedded_rows.append({
+        "n_features": len(cols),
+        "cv_roc_auc_mean": cv_scores.mean(),
+        "features": cols,
+    })
+
+embedded_table = pd.DataFrame(embedded_rows).drop_duplicates("n_features")
+best_embedded = embedded_table.sort_values(["cv_roc_auc_mean", "n_features"], ascending=[False, True]).iloc[0]
+final_features = list(best_embedded["features"])
+
+X = df[final_features]
+
+pd.DataFrame({
+    "Rank": range(1, len(final_features) + 1),
+    "Feature": final_features,
+    "Gain": gain_scores.loc[final_features].round(6).values,
+})"""
+    ),
+    md("#### (b) Target or Label Definition"),
+    code(
+        r"""# Define Target
+y = df["Label"].astype(int).values
+y"""
+    ),
+    code(
+        r"""# label count
+class_labels = np.bincount(y)
+class_labels"""
+    ),
+    md("### (5) Boosting Ensemble"),
+    code(
+        r"""# Splitting the datasets into training and testing data.
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+# Output the train and test data size
+print(f"Train and Test Size {len(X_train)}, {len(X_test)}")"""
+    ),
+    code(
+        r"""# Scale and fit the classifier model
+
+# For binary or multiclass classification
+sample_weights = compute_sample_weight(class_weight="balanced", y=y_train)
+
+base_model = XGBClassifier(
+    verbosity=0,
+    eval_metric="logloss",
+)
+
+base_model.fit(
+    X_train,
+    y_train,
+    sample_weight=sample_weights,
+)"""
+    ),
+    code(
+        r"""# Predicting the test dataset
+y_pred = base_model.predict(X_test)
+
+# Predict Probabilities
+y_proba = base_model.predict_proba(X_test)"""
+    ),
+    code(
+        r"""# Accuracy Scores
+acc_train = accuracy_score(y_train, base_model.predict(X_train))
+acc_test = accuracy_score(y_test, y_pred)
+
+print(f"Train Accuracy: {acc_train:0.4}, Test Accuracy: {acc_test:0.4}")"""
+    ),
+    code(
+        r"""# Balanced Accuracy Scores
+bal_acc_train = balanced_accuracy_score(y_train, base_model.predict(X_train))
+bal_acc_test = balanced_accuracy_score(y_test, y_pred)
+
+print(f"Train Balanced Accuracy: {bal_acc_train:0.4}, Test Balanced Accuracy: {bal_acc_test:0.4}")"""
+    ),
+    code(
+        r"""# Display confussion matrix
+disp_cm = ConfusionMatrixDisplay.from_estimator(
+    base_model,
+    X_test,
+    y_test,
+    display_labels=base_model.classes_,
+    cmap=plt.cm.Blues,
+)
+disp_cm.ax_.set_title("Confusion matrix")
+plt.show()"""
+    ),
+    code(
+        r"""# Classification Report
+print(classification_report(y_test, y_pred))"""
+    ),
+    code(
+        r"""# Display ROCCurve
+disp_roc = RocCurveDisplay.from_estimator(
+    base_model,
+    X_test,
+    y_test,
+    name="XGBoost",
+)
+
+disp_roc.ax_.set_title("ROC Curve")
+plt.plot([0, 1], [0, 1], linestyle="--")
+plt.show()"""
+    ),
+    code(
+        r"""# Display PR Curve
+disp_pr = PrecisionRecallDisplay.from_estimator(
+    base_model,
+    X_test,
+    y_test,
+    name="XGBoost",
+)
+
+disp_pr.ax_.set_title("Precision-Recall Curve")
+plt.show()"""
+    ),
+    md("### (6) Hyperparameter Tuning"),
+    md("#### (a) XGBoost's hyper-parameter"),
+    code(
+        r"""# Timeseries Cross Validation 2-split Demonstration
+tscv_demo = TimeSeriesSplit(n_splits=2, gap=1)
+for train, test in tscv_demo.split(X):
+    print(f"Train: {train}, Test: {test}")"""
+    ),
+    code(
+        r"""# Cross-validation
+tscv = TimeSeriesSplit(n_splits=5, gap=1)"""
+    ),
+    code(
+        r"""# Get params list
+base_model.get_params()"""
+    ),
+    md("#### (b) Randomized Search"),
+    code(
+        r"""# Randomized search configuration
+param_dist = {
+    "n_estimators": randint(60, 350),
+    "max_depth": randint(1, 4),
+    "learning_rate": loguniform(0.01, 0.12),
+    "subsample": uniform(0.60, 0.40),
+    "colsample_bytree": uniform(0.60, 0.40),
+    "min_child_weight": randint(2, 18),
+    "gamma": uniform(0, 6),
+    "reg_alpha": loguniform(1e-4, 8),
+    "reg_lambda": loguniform(0.5, 20),
+}
+
+search = RandomizedSearchCV(
+    estimator=XGBClassifier(verbosity=0, eval_metric="logloss", tree_method="hist", random_state=42, n_jobs=-1),
+    param_distributions=param_dist,
+    n_iter=50,
+    scoring="roc_auc",
+    cv=tscv,
+    random_state=42,
+    n_jobs=1,
+)
+
+search.fit(X_train, y_train, sample_weight=sample_weights)
+best_params = search.best_params_
+
+print("Best parameters found by randomized search:")
+for k, v in best_params.items():
+    print(f"  {k}: {v}")
+print(f"Best cv/roc_auc_mean: {search.best_score_:.4f}")"""
+    ),
+    code(
+        r"""# Create tuned model using best parameters
+tuned_model = XGBClassifier(
+    **best_params,
+    verbosity=0,
+    eval_metric="logloss",
+    tree_method="hist",
+    random_state=42,
+    n_jobs=-1,
+)
+
+# Fit with evaluation tracking
+tuned_model.fit(
+    X_train,
+    y_train,
+    sample_weight=sample_weights,
+    eval_set=[(X_train, y_train), (X_test, y_test)],
+    verbose=False,
+)
+
+print("Tuned model training completed successfully!")"""
+    ),
+    code(
+        r"""# Return the evaluation results
+evals_result = tuned_model.evals_result()
+pd.DataFrame({
+    "train_logloss": evals_result["validation_0"]["logloss"],
+    "test_logloss": evals_result["validation_1"]["logloss"],
+}).tail()"""
+    ),
+    code(
+        r"""# Cross validation score with tuned model
+cv_scores = cross_val_score(
+    tuned_model,
+    X_train,
+    y_train,
+    cv=tscv,
+    scoring="f1",
+    params={"sample_weight": sample_weights},
+    n_jobs=1,
+)
+print(f"Mean CV Score: {cv_scores.mean():.4f} (+/- {cv_scores.std() * 2:.4f})")"""
+    ),
+    code(
+        r"""# Predicting the test dataset
+y_pred = tuned_model.predict(X_test)
+y_proba = tuned_model.predict_proba(X_test)
+
+# Measure Accuracy
+acc_train = accuracy_score(y_train, tuned_model.predict(X_train))
+acc_test = accuracy_score(y_test, y_pred)
+
+print(f"\n Training Accuracy \t: {acc_train :0.4} \n Test Accuracy \t\t: {acc_test :0.4}")"""
+    ),
+    code(
+        r"""bal_acc_train = balanced_accuracy_score(y_train, tuned_model.predict(X_train))
+bal_acc_test = balanced_accuracy_score(y_test, y_pred)
+
+print(f"Train Balanced Accuracy: {bal_acc_train:0.4}, Test Balanced Accuracy: {bal_acc_test:0.4}")
+print(f"Test ROC AUC: {roc_auc_score(y_test, y_proba[:, 1]):0.4}")
+print(f"Test F1: {f1_score(y_test, y_pred):0.4}")
+print(f"Test Precision: {precision_score(y_test, y_pred):0.4}")
+print(f"Test Recall: {recall_score(y_test, y_pred):0.4}")"""
+    ),
+    code(
+        r"""# Tuned Model: Evaluation
+
+# Confusion Matrix
+disp = ConfusionMatrixDisplay.from_estimator(
+    tuned_model,
+    X_test,
+    y_test,
+    display_labels=tuned_model.classes_,
+    cmap=plt.cm.Blues,
+)
+disp.ax_.set_title("Confusion matrix")
+plt.show()
+
+# Classification Report
+print(classification_report(y_test, y_pred))
+
+# ROC Curve
+disp_roc = RocCurveDisplay.from_estimator(
+    tuned_model,
+    X_test,
+    y_test,
+    name="Tuned XGBoost",
+)
+disp_roc.ax_.set_title("ROC Curve")
+plt.plot([0, 1], [0, 1], linestyle="--")
+plt.show()
+
+# PR Curve
+disp_pr = PrecisionRecallDisplay.from_estimator(
+    tuned_model,
+    X_test,
+    y_test,
+    name="Tuned XGBoost",
+)
+disp_pr.ax_.set_title("Precision-Recall Curve")
+plt.show()"""
+    ),
+    md("### (7) Evaluation"),
+    md("#### (a) Feature Importance"),
+    code(
+        r"""# Plot the feature importance of the tuned model
+plot_importance(tuned_model, importance_type="weight", title="Tuned Model Feature Importance", show_values=False)
+plt.tight_layout()
+plt.grid(True, alpha=0.3)
+plt.show()"""
+    ),
+    code(
+        r"""# The Gain is the most relevant attribute to interpret the relative importance of each feature.
+gain_importance = tuned_model.get_booster().get_score(importance_type="gain")
+pd.Series(gain_importance).sort_values(ascending=False).to_frame("gain")"""
+    ),
+    code(
+        r"""# Feature importance by gain
+plot_importance(tuned_model, importance_type="gain", show_values=False)
+plt.tight_layout()
+plt.grid(True, alpha=0.3)
+plt.show()"""
+    ),
+    md("#### (b) Backtest Analysis"),
+    code(
+        r"""# Optional add-on: simple backtest of predicted signals.
+test_index = X_test.index
+signal = pd.Series(y_pred, index=test_index, name="signal")
+strategy_returns = signal * df.loc[test_index, "next_log_ret"]
+buy_hold_returns = df.loc[test_index, "next_log_ret"]
+
+def performance(log_returns, exposure):
+    wealth = np.exp(log_returns.cumsum())
+    annual_return = wealth.iloc[-1] ** (252 / len(log_returns)) - 1
+    annual_volatility = log_returns.std() * np.sqrt(252)
+    sharpe = annual_return / annual_volatility if annual_volatility > 0 else np.nan
+    drawdown = wealth / wealth.cummax() - 1
+    return pd.Series({
+        "total_return": wealth.iloc[-1] - 1,
+        "annual_return": annual_return,
+        "annual_volatility": annual_volatility,
+        "sharpe": sharpe,
+        "max_drawdown": drawdown.min(),
+        "exposure": exposure,
+    })
+
+backtest = pd.DataFrame({
+    "strategy": performance(strategy_returns, signal.mean()),
+    "buy_hold": performance(buy_hold_returns, 1.0),
+})
+backtest.round(4)"""
+    ),
+    code(
+        r"""wealth = pd.DataFrame({
+    "Strategy": np.exp(strategy_returns.cumsum()),
+    "Buy & Hold": np.exp(buy_hold_returns.cumsum()),
+})
+
+fig, ax = plt.subplots(figsize=(9, 4.5))
+wealth.plot(ax=ax, linewidth=2)
+ax.set_title("Cumulative Wealth on Test Set")
+ax.set_ylabel("Cumulative wealth")
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()"""
+    ),
+    md(
+        "## Conclusion\n\n"
+        "调参后的 XGBoost 在测试集上的 ROC AUC 高于 0.5，说明模型对下一交易日有效上涨具有一定排序能力，但预测能力仍然有限。"
+        "这一结果符合短期指数收益噪声较高、方向预测困难的经验事实。回测结果用于检验预测信号的经济含义，"
+        "但未考虑交易成本和滑点，因此应作为附加参考，而不是独立交易建议。"
+    ),
+]
+
+
 def main() -> None:
     write_notebook("Answer1.ipynb", answer1_cells)
     write_notebook("Answer2.ipynb", answer2_cells)
