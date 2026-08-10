@@ -5,7 +5,13 @@
       "Bash(pip install *)",
       "Bash(pdftotext \"CQF Final Project Brief - Jan 26 v.4.pdf\" -)",
       "Bash(pip list *)",
-      "Bash(python data_loader.py)"
+      "Bash(python data_loader.py)",
+      "Bash(python3)",
+      "Bash(/d/Project/CQFLearning/venv/Scripts/python.exe)",
+      "Bash(/d/Project/CQFLearning/venv/Scripts/python.exe fix_result.py)",
+      "Bash(iconv -f gbk -t utf-8)",
+      "Bash(/d/Project/CQFLearning/venv/Scripts/python.exe fix_remaining.py)",
+      "Bash(grep -n \"## 3\\\\\\\\.7\\\\|R²=0\\\\\\\\.9800\\\\|ADF统计量.*-4\\\\\\\\.57\" Result.md)"
     ]
   }
 }
