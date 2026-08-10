@@ -43,7 +43,7 @@ def main():
     
     # Setup paths
     base_dir = os.path.dirname(code_dir)
-    data_dir = os.path.join(base_dir, 'data')
+    data_dir = os.path.join(code_dir, 'data')  # 修复：数据在Script/data/下
     fig_dir = os.path.join(base_dir, 'figures')
     output_dir = os.path.join(base_dir, 'output')
     

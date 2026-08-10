@@ -28,6 +28,7 @@ FinalProject/
 │   └── Result.md            # 📝 项目解答文档（中文）
 │
 ├── Script/                   # Python 代码实现
+│   ├── CQF_Pairs_Trading_Complete.ipynb  # ✅ 完整的Jupyter Notebook（提交用）
 │   ├── data_loader.py       # 数据加载和预处理
 │   ├── cointegration.py     # 协整检验（EG/Johansen/VECM）
 │   ├── ou_process.py        # OU过程拟合（MLE）
@@ -37,6 +38,7 @@ FinalProject/
 │   ├── visualization.py     # 可视化模块
 │   ├── main.py              # 主执行脚本
 │   ├── data/                # 数据文件
+│   ├── NOTEBOOK_README.md   # Notebook使用说明
 │   └── README.md            # 代码说明
 │
 ├── TODO.md                   # 📋 检查计划和进度追踪
