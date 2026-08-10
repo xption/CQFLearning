@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(python -c ' *)",
-      "Bash(pip install *)"
+      "Bash(pip install *)",
+      "Bash(pdftotext \"CQF Final Project Brief - Jan 26 v.4.pdf\" -)",
+      "Bash(pip list *)",
+      "Bash(python data_loader.py)"
     ]
   }
 }
