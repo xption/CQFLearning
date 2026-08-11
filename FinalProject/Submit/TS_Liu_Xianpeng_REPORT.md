@@ -11,7 +11,7 @@
 
 This study selects rebar and hot-rolled coil futures as pairs trading instruments, constructing a statistical arbitrage strategy based on cointegration theory and Ornstein-Uhlenbeck (OU) mean reversion. To address the rollover gap issue in futures contracts, we employ a liquidity-based method for continuous price adjustment. Through ADF tests, VAR regression, Engle-Granger cointegration, and Johansen/VECM multivariate cointegration, we verify the long-run and short-run equilibrium relationships between the instruments. We fit OU parameters using maximum likelihood estimation (MLE) to calculate the half-life of spread convergence and equilibrium residuals. Z-score thresholds are optimized through grid search. Dynamic parameter re-estimation and full-sample backtesting are conducted using an 8-month rolling window with 10-day frequency.
 
-Empirical results show that during the 2023-2025 sample period, the two instruments exhibit a statistically significant cointegration relationship at the 1% level (ADF statistic -4.57, p-value 0.000089), with a hedge ratio β of 1.078 and an R² of 0.98, indicating a strong long-run equilibrium. The OU process exhibits clear mean-reverting characteristics with a half-life of 18.2 days and a mean reversion speed θ of 0.043, confirming no long-term trend drift and validating the medium-to-low frequency arbitrage logic.
+Empirical results show that during the 2023-2025 sample period, the two instruments exhibit a statistically significant cointegration relationship at the 1% level (ADF statistic -4.57, p-value 0.0001), with a hedge ratio β of 1.078 and an R² of 0.98, indicating a strong long-run equilibrium. The OU process exhibits clear mean-reverting characteristics with a half-life of 18.2 days and a mean reversion speed θ of 0.038, confirming no long-term trend drift and validating the medium-to-low frequency arbitrage logic.
 
 The optimal trading threshold combination is 2.4σ for entry and 0.8σ for exit. All four trades executed in the full sample were profitable, achieving a cumulative return of 4.79% with controlled drawdown and excellent signal quality. For the RB-HC black series pair, the static fixed hedge ratio strategy outperforms the dynamic rolling cointegration strategy, as short-term window noise can undermine strategy effectiveness.
 
@@ -453,7 +453,7 @@ We calculate Sharpe ratios within each rolling window, generating a time series 
 | Strategy Type | Sharpe Ratio | Max Drawdown | Trade Count | Stability |
 |---------------|--------------|--------------|-------------|-----------|
 | Static (2.4σ) | 0.30 | 7.45% | 4 | High |
-| Dynamic Rolling | -0.05~0.15 | 12~18% | 15~30 | Low |
+| Dynamic Rolling | -0.5~1.2 (avg<0) | 12~18% | 15~30 | Low |
 
 **Conclusion**: For RB-HC black series pairs, static fixed hedge ratio strategies significantly outperform dynamic rolling cointegration strategies. Short-term window noise amplifies false signals, and high-frequency parameter updates undermine strategy robustness.
 
@@ -552,7 +552,7 @@ This study constructs a pairs trading strategy for rebar and hot-rolled coil fut
 
 1. RB and HC exhibit extremely strong cointegration (ADF=-4.57, p=0.0001, R²=0.98), with hedge ratio β=1.078, meeting the theoretical foundation for statistical arbitrage;
 
-2. OU process shows clear mean reversion (θ=0.038, half-life 18.2 days, AR coefficient 0.43), with definite convergence characteristics, no long-term trend drift, validating medium-to-low frequency arbitrage logic;
+2. OU process shows clear mean reversion (θ=0.038, half-life 18.2 days), with definite convergence characteristics, no long-term trend drift, validating medium-to-low frequency arbitrage logic;
 
 3. Optimal trading threshold combination is 2.4σ entry and 0.8σ exit. All 4 trades in full sample were profitable, cumulative return 4.79%, controlled drawdown, extremely high signal quality;
 
