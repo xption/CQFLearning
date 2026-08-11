@@ -160,7 +160,7 @@ Apply ADF test to residual series $\epsilon_t$. If residuals are stationary, the
 We independently implement the complete ADF test process without calling scipy/statsmodels packaged functions:
 
 1. Construct lag difference regression equation: $\Delta \epsilon_t = \theta \epsilon_{t-1} + \sum_{i=1}^{k} \gamma_i \Delta \epsilon_{t-i} + u_t$
-2. Estimate via OLS to obtain $	heta$ coefficient and its t-statistic
+2. Estimate via OLS to obtain $\theta$ coefficient and its t-statistic
 3. Compare with MacKinnon critical value table to determine stationarity
 4. Output ADF statistic, p-value, and critical values at 1%, 5%, 10% significance levels
 
@@ -170,7 +170,7 @@ EG two-step method only handles single-equation cointegration. For multiple coin
 
 ### 3.5.1 Trace Statistic Test
 
-$$	ext{Trace} = -T \sum_{i=r+1}^{n} \ln(1 - \lambda_i)$$
+$$\text{Trace} = -T \sum_{i=r+1}^{n} \ln(1 - \lambda_i)$$
 
 Where $\lambda_i$ are eigenvalues sorted in descending order, $r$ is the number of cointegrating relationships, $T$ is sample size.
 
@@ -178,7 +178,7 @@ Test logic: Starting from r=0, sequentially test whether trace statistic exceeds
 
 ### 3.5.2 Maximum Eigenvalue Test
 
-$$	ext{Max-Eigen} = -T \ln(1 - \lambda_{r+1})$$
+$$\text{Max-Eigen} = -T \ln(1 - \lambda_{r+1})$$
 
 Tests whether exactly r cointegrating relationships exist, more stringent than trace test.
 
@@ -244,7 +244,7 @@ $$dX_t = \theta(\mu - X_t)dt + \sigma dW_t$$
 
 Where:
 - $X_t$: Spread process (cointegration residuals)
-- $	heta$: Mean reversion speed, measuring how quickly deviations return to equilibrium
+- $\theta$: Mean reversion speed, measuring how quickly deviations return to equilibrium
 - $\mu$: Long-term mean, the equilibrium center of the spread
 - $\sigma$: Instantaneous volatility of the spread process
 - $W_t$: Standard Brownian motion
@@ -269,15 +269,15 @@ $$\mathcal{L}(\theta, \mu, \sigma | X) = \sum_{t=1}^{T-1} \log p(X_{t+1} | X_t; 
 
 Where conditional density:
 
-$$p(X_{t+1} | X_t) \sim \mathcal{N}\left(X_t e^{-\theta \Delta t} + \mu(1 - e^{-\theta \Delta t}), \frac{\sigma^2}{2\theta}(1 - e^{-2	\theta \Delta t})ight)$$
+$$p(X_{t+1} | X_t) \sim \mathcal{N}\left(X_t e^{-\theta \Delta t} + \mu(1 - e^{-\theta \Delta t}), \frac{\sigma^2}{2\theta}(1 - e^{-2\theta \Delta t})\right)$$
 
-Using scipy.optimize.minimize with L-BFGS-B algorithm for numerical optimization to obtain MLE estimates $\hat{	heta}_{MLE}$, $\hat{\mu}_{MLE}$, $\hat{\sigma}_{MLE}$.
+Using scipy.optimize.minimize with L-BFGS-B algorithm for numerical optimization to obtain MLE estimates $\hat{\theta}_{MLE}$, $\hat{\mu}_{MLE}$, $\hat{\sigma}_{MLE}$.
 
 ### 4.3.2 Least Squares Estimation (LSE)
 
 Discretize the OU process:
 
-$$\Delta X_t = 	heta \mu \Delta t - \theta X_{t-1} \Delta t + \sigma \sqrt{\Delta t} \epsilon_t$$
+$$\Delta X_t = \theta \mu \Delta t - \theta X_{t-1} \Delta t + \sigma \sqrt{\Delta t} \epsilon_t$$
 
 Rearrange as linear regression:
 
@@ -296,7 +296,7 @@ Half-life measures the time required for spread deviations to decay to half thei
 
 $$t_{1/2} = \frac{\ln 2}{\theta}$$
 
-Economic interpretation: Larger $	heta$ implies faster mean reversion and shorter half-life, indicating strong equilibrium restoration and suitable for high-frequency arbitrage; smaller $	heta$ implies slower reversion, requiring longer holding periods.
+Economic interpretation: Larger $\theta$ implies faster mean reversion and shorter half-life, indicating strong equilibrium restoration and suitable for high-frequency arbitrage; smaller $\theta$ implies slower reversion, requiring longer holding periods.
 
 ## 4.5 OU Parameter Empirical Results
 
@@ -306,7 +306,7 @@ Based on cointegration residuals from 2023-2025, OU parameter estimation results
 
 | Parameter | MLE Estimate | Interpretation |
 |-----------|--------------|----------------|
-| $	heta$ | 0.038092 | Mean reversion speed |
+| $\theta$ | 0.038092 | Mean reversion speed |
 | $\mu$ | -0.001922 | Long-term mean (close to zero equilibrium) |
 | $\sigma$ | 0.003812 | Daily volatility |
 | Half-life | 18.20 days | Average reversion time |
@@ -315,7 +315,7 @@ Based on cointegration residuals from 2023-2025, OU parameter estimation results
 
 | Parameter | LSE Estimate |
 |-----------|--------------|
-| $	heta$ | 0.036541 |
+| $\theta$ | 0.036541 |
 | $\mu$ | -0.002105 |
 | $\sigma$ | 0.003798 |
 | Half-life | 18.97 days |
@@ -328,11 +328,11 @@ MLE and LSE estimates are highly consistent (θ differs by <5%, half-life ~18 da
 
 OU process stationarity requires:
 
-$$	heta > 0, \quad 	ext{and} \quad \lim_{t 	o \infty} E[X_t] = \mu$$
+$$\theta > 0, \quad \text{and} \quad \lim_{t\to \infty} E[X_t] = \mu$$
 
 Empirical results: $\theta = 0.0381 > 0$, confirming mean reversion force exists. Long-term mean $\mu \approx -0.002$ close to zero with no systematic bias, and stationary variance:
 
-$$\sigma^2_{\infty} = \frac{\sigma^2}{2\theta} = \frac{0.003812^2}{2 	imes 0.0381} \approx 0.0001908$$
+$$\sigma^2_{\infty} = \frac{\sigma^2}{2\theta} = \frac{0.003812^2}{2 \times 0.0381} \approx 0.0001908$$
 
 Stationary standard deviation $\sigma_{\infty} = 0.01381$, consistent with observed residual volatility, confirming OU process validity.
 
