@@ -18,7 +18,10 @@
       "Bash(venv/Scripts/pip install *)",
       "Bash(python -c \"import json; nb=json.load\\(open\\('CQF_Pairs_Trading_Complete.ipynb','r',encoding='utf-8'\\)\\); import sys; sys.stdout.buffer.write\\(''.join\\(nb['cells'][0]['source']\\).encode\\('utf-8'\\)\\)\")",
       "Bash(iconv -f UTF-8 -t GBK//IGNORE)",
-      "Bash(python)"
+      "Bash(python)",
+      "Bash(python translate_notebook.py)",
+      "Bash(python fix_translation.py)",
+      "Bash(python fix_cell21.py)"
     ]
   }
 }
