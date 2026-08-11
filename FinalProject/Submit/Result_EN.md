@@ -109,23 +109,23 @@ To capture the dynamic lag interaction effects between the two price series, we 
 ### 3.3.1 VAR Model Form
 
 $$
-egin{bmatrix}
+\begin{bmatrix}
 \ln(P_{rb,t}) \
 \ln(P_{hc,t})
 \end{bmatrix}
 =
-egin{bmatrix}
+\begin{bmatrix}
 c_1 \
 c_2
 \end{bmatrix}
 +
 \sum_{i=1}^{p} A_i
-egin{bmatrix}
+\begin{bmatrix}
 \ln(P_{rb,t-i}) \
 \ln(P_{hc,t-i})
 \end{bmatrix}
 +
-egin{bmatrix}
+\begin{bmatrix}
 \epsilon_{1,t} \
 \epsilon_{2,t}
 \end{bmatrix}
@@ -147,9 +147,9 @@ The Engle-Granger (EG) two-step method is the classic cointegration testing appr
 
 **Step 1: Static Cointegration Regression**
 
-$$\ln(P_{rb,t}) = lpha + eta \cdot \ln(P_{hc,t}) + \epsilon_t$$
+$$\ln(P_{rb,t}) = \alpha + \beta \cdot \ln(P_{hc,t}) + \epsilon_t$$
 
-Estimate the long-run equilibrium relationship via OLS, obtaining the cointegration coefficient (hedge ratio) $eta$ and equilibrium residual series $\epsilon_t$.
+Estimate the long-run equilibrium relationship via OLS, obtaining the cointegration coefficient (hedge ratio) $\beta$ and equilibrium residual series $\epsilon_t$.
 
 **Step 2: Residual Stationarity Test**
 
@@ -159,7 +159,7 @@ Apply ADF test to residual series $\epsilon_t$. If residuals are stationary, the
 
 We independently implement the complete ADF test process without calling scipy/statsmodels packaged functions:
 
-1. Construct lag difference regression equation: $\Delta \epsilon_t = 	heta \epsilon_{t-1} + \sum_{i=1}^{k} \gamma_i \Delta \epsilon_{t-i} + u_t$
+1. Construct lag difference regression equation: $\Delta \epsilon_t = \theta \epsilon_{t-1} + \sum_{i=1}^{k} \gamma_i \Delta \epsilon_{t-i} + u_t$
 2. Estimate via OLS to obtain $	heta$ coefficient and its t-statistic
 3. Compare with MacKinnon critical value table to determine stationarity
 4. Output ADF statistic, p-value, and critical values at 1%, 5%, 10% significance levels
@@ -191,10 +191,10 @@ Both trace and maximum eigenvalue tests confirm the existence of at least one co
 VECM is the dynamic extension of cointegration models, decomposing price movements into long-run equilibrium adjustment and short-run fluctuations:
 
 $$
-\Delta Y_t = lpha (eta' Y_{t-1} - c) + \sum_{i=1}^{p-1} \Gamma_i \Delta Y_{t-i} + \epsilon_t
+\Delta Y_t = \alpha (\beta' Y_{t-1} - c) + \sum_{i=1}^{p-1} \Gamma_i \Delta Y_{t-i} + \epsilon_t
 $$
 
-Where $lpha$ is the error correction coefficient representing speed of short-term deviation correction toward long-run equilibrium; $\Gamma_i$ are short-term lag fluctuation coefficients.
+Where $\alpha$ is the error correction coefficient representing speed of short-term deviation correction toward long-run equilibrium; $\Gamma_i$ are short-term lag fluctuation coefficients.
 
 Empirical output: The error correction coefficient is significantly negative, proving that when spreads deviate from long-run equilibrium, the system possesses a self-correcting mechanism. This further validates mean reversion properties from a dynamic perspective and provides core indicators for subsequent rolling window structural break identification.
 
@@ -202,7 +202,7 @@ Empirical output: The error correction coefficient is significantly negative, pr
 
 ### 3.7.1 OLS Regression Results
 
-OLS regression yields equilibrium equation parameters: intercept $lpha = -0.6786$, hedge ratio $eta = 1.078$.
+OLS regression yields equilibrium equation parameters: intercept $\alpha = -0.6786$, hedge ratio $\beta = 1.078$.
 
 Final long-run equilibrium equation:
 
@@ -240,7 +240,7 @@ Comprehensive assessment: RB-HC exhibits an exceptionally strong and stable coin
 
 The Ornstein-Uhlenbeck (OU) process is the continuous-time stochastic differential equation model for mean reversion, widely used in interest rate modeling, commodity pricing, and statistical arbitrage. Its standard form:
 
-$$dX_t = 	heta(\mu - X_t)dt + \sigma dW_t$$
+$$dX_t = \theta(\mu - X_t)dt + \sigma dW_t$$
 
 Where:
 - $X_t$: Spread process (cointegration residuals)
@@ -253,7 +253,7 @@ Where:
 
 The OU process captures two essential characteristics of mean reversion:
 
-1. **Reversion force**: When $X_t > \mu$, drift term $	heta(\mu - X_t) < 0$, generating negative pull toward equilibrium; conversely when $X_t < \mu$, positive drift restores balance.
+1. **Reversion force**: When $X_t > \mu$, drift term $\theta(\mu - X_t) < 0$, generating negative pull toward equilibrium; conversely when $X_t < \mu$, positive drift restores balance.
 
 2. **Volatility**: $\sigma dW_t$ represents random shocks from short-term supply-demand imbalances, macroeconomic news, etc., causing the spread to fluctuate around equilibrium without infinite divergence.
 
@@ -265,11 +265,11 @@ This study employs two methods for OU parameter estimation:
 
 MLE is the statistical gold standard, maximizing log-likelihood function:
 
-$$\mathcal{L}(	heta, \mu, \sigma | X) = \sum_{t=1}^{T-1} \log p(X_{t+1} | X_t; 	heta, \mu, \sigma)$$
+$$\mathcal{L}(\theta, \mu, \sigma | X) = \sum_{t=1}^{T-1} \log p(X_{t+1} | X_t; \theta, \mu, \sigma)$$
 
 Where conditional density:
 
-$$p(X_{t+1} | X_t) \sim \mathcal{N}\left(X_t e^{-	heta \Delta t} + \mu(1 - e^{-	heta \Delta t}), rac{\sigma^2}{2	heta}(1 - e^{-2	heta \Delta t})ight)$$
+$$p(X_{t+1} | X_t) \sim \mathcal{N}\left(X_t e^{-\theta \Delta t} + \mu(1 - e^{-\theta \Delta t}), \frac{\sigma^2}{2\theta}(1 - e^{-2	\theta \Delta t})ight)$$
 
 Using scipy.optimize.minimize with L-BFGS-B algorithm for numerical optimization to obtain MLE estimates $\hat{	heta}_{MLE}$, $\hat{\mu}_{MLE}$, $\hat{\sigma}_{MLE}$.
 
@@ -277,24 +277,24 @@ Using scipy.optimize.minimize with L-BFGS-B algorithm for numerical optimization
 
 Discretize the OU process:
 
-$$\Delta X_t = 	heta \mu \Delta t - 	heta X_{t-1} \Delta t + \sigma \sqrt{\Delta t} \epsilon_t$$
+$$\Delta X_t = 	heta \mu \Delta t - \theta X_{t-1} \Delta t + \sigma \sqrt{\Delta t} \epsilon_t$$
 
 Rearrange as linear regression:
 
 $$\Delta X_t = a + b X_{t-1} + u_t$$
 
-Where $a = 	heta \mu \Delta t$, $b = -	heta \Delta t$.
+Where $a = \theta \mu \Delta t$, $b = -\theta \Delta t$.
 
 Solve via OLS to obtain:
-- $\hat{	heta}_{LS} = -\hat{b} / \Delta t$
-- $\hat{\mu}_{LS} = \hat{a} / (\hat{	heta}_{LS} \Delta t)$
-- $\hat{\sigma}_{LS} = 	ext{std}(u_t) / \sqrt{\Delta t}$
+- $\hat{\theta}_{LS} = -\hat{b} / \Delta t$
+- $\hat{\mu}_{LS} = \hat{a} / (\hat{\theta}_{LS} \Delta t)$
+- $\hat{\sigma}_{LS} = \text{std}(u_t) / \sqrt{\Delta t}$
 
 ## 4.4 Half-Life Calculation
 
 Half-life measures the time required for spread deviations to decay to half their initial magnitude, a key metric for mean reversion speed:
 
-$$t_{1/2} = rac{\ln 2}{	heta}$$
+$$t_{1/2} = \frac{\ln 2}{\theta}$$
 
 Economic interpretation: Larger $	heta$ implies faster mean reversion and shorter half-life, indicating strong equilibrium restoration and suitable for high-frequency arbitrage; smaller $	heta$ implies slower reversion, requiring longer holding periods.
 
@@ -330,9 +330,9 @@ OU process stationarity requires:
 
 $$	heta > 0, \quad 	ext{and} \quad \lim_{t 	o \infty} E[X_t] = \mu$$
 
-Empirical results: $	heta = 0.0381 > 0$, confirming mean reversion force exists. Long-term mean $\mu pprox -0.002$ close to zero with no systematic bias, and stationary variance:
+Empirical results: $\theta = 0.0381 > 0$, confirming mean reversion force exists. Long-term mean $\mu \approx -0.002$ close to zero with no systematic bias, and stationary variance:
 
-$$\sigma^2_{\infty} = rac{\sigma^2}{2	heta} = rac{0.003812^2}{2 	imes 0.0381} pprox 0.0001908$$
+$$\sigma^2_{\infty} = \frac{\sigma^2}{2\theta} = \frac{0.003812^2}{2 	imes 0.0381} \approx 0.0001908$$
 
 Stationary standard deviation $\sigma_{\infty} = 0.01381$, consistent with observed residual volatility, confirming OU process validity.
 
@@ -348,7 +348,7 @@ Through MLE and LSE dual validation, we rigorously estimate OU parameters for RB
 
 To eliminate the impact of absolute spread magnitude and enable dynamic comparison across different periods, we standardize cointegration residuals to Z-scores:
 
-$$Z_t = rac{\epsilon_t - \mu}{\sigma}$$
+$$Z_t = \frac{\epsilon_t - \mu}{\sigma}$$
 
 Where $\epsilon_t$ is the cointegration residual, $\mu$ is the mean, and $\sigma$ is the standard deviation.
 
@@ -357,14 +357,14 @@ Z-score represents the number of standard deviations the spread deviates from eq
 ## 5.2 Trading Logic
 
 **Entry signals:**
-- When $Z_t > Z_{	ext{entry}}$ (spread overvalued): Short RB, Long HC (short the spread)
-- When $Z_t < -Z_{	ext{entry}}$ (spread undervalued): Long RB, Short HC (long the spread)
+- When $Z_t > Z_{\text{entry}}$ (spread overvalued): Short RB, Long HC (short the spread)
+- When $Z_t < -Z_{\text{entry}}$ (spread undervalued): Long RB, Short HC (long the spread)
 
 **Exit signals:**
-- When $|Z_t| < Z_{	ext{exit}}$: Close positions as spread returns to equilibrium
+- When $|Z_t| < Z_{\text{exit}}$: Close positions as spread returns to equilibrium
 
 **Position sizing:**
-- Use hedge ratio $eta$ for dollar-neutral positions: for every 1 unit of RB, trade $eta$ units of HC
+- Use hedge ratio $beta$ for dollar-neutral positions: for every 1 unit of RB, trade $beta$ units of HC
 - Maintains market neutrality, isolating relative value arbitrage profits
 
 ## 5.3 Rolling Grid Search Threshold Optimization
