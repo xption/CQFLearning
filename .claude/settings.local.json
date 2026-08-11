@@ -15,7 +15,10 @@
       "Bash(/d/Project/CQFLearning/venv/Scripts/python.exe build_complete_notebook.py)",
       "Bash(/d/Project/CQFLearning/venv/Scripts/python.exe main.py)",
       "Bash(tee main_run.log)",
-      "Bash(venv/Scripts/pip install *)"
+      "Bash(venv/Scripts/pip install *)",
+      "Bash(python -c \"import json; nb=json.load\\(open\\('CQF_Pairs_Trading_Complete.ipynb','r',encoding='utf-8'\\)\\); import sys; sys.stdout.buffer.write\\(''.join\\(nb['cells'][0]['source']\\).encode\\('utf-8'\\)\\)\")",
+      "Bash(iconv -f UTF-8 -t GBK//IGNORE)",
+      "Bash(python)"
     ]
   }
 }
