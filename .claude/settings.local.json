@@ -21,7 +21,8 @@
       "Bash(python)",
       "Bash(python translate_notebook.py)",
       "Bash(python fix_translation.py)",
-      "Bash(python fix_cell21.py)"
+      "Bash(python fix_cell21.py)",
+      "Bash(grep -n \"\\\\\\\\$\\\\\\\\$\" TS_Liu_Xianpeng_REPORT.md)"
     ]
   }
 }
